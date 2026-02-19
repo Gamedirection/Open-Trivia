@@ -84,6 +84,28 @@ helm install open-trivia helm/open-trivia \
   --set backend.env.JWT_SECRET=change-me
 ```
 
+## Docker Swarm
+Create secrets (recommended):
+```bash
+echo "change-me" | docker secret create jwt_secret -
+echo "smtp.example.com" | docker secret create smtp_host -
+echo "smtp_user" | docker secret create smtp_user -
+echo "smtp_pass" | docker secret create smtp_pass -
+```
+
+Deploy:
+```bash
+docker stack deploy -c docker-compose.yml open-trivia
+```
+
+Scale:
+```bash
+docker service scale open-trivia_frontend=2
+docker service scale open-trivia_backend=2
+```
+
+Note: ensure the Swarm section in `docker-compose.yml` secrets is enabled.
+
 ## Deployment Notes
 - Use tagged images for reproducible deployments.
 - If using `latest`, always `docker compose pull` + `docker compose up -d --force-recreate`.
