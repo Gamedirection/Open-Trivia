@@ -96,6 +96,13 @@ async function initDB() {
                 last_run TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS backup_snapshots (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                note TEXT,
+                data JSONB NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS scoring_settings (
                 id SERIAL PRIMARY KEY,
                 min_points INT DEFAULT 5,

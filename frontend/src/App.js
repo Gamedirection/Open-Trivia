@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Link, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Game from './Game';
 import Admin from './Admin';
 import Leaderboard from './Leaderboard';
@@ -269,6 +269,26 @@ const LoginModal = () => {
     );
 };
 
+const RouteLoader = () => {
+    const location = useLocation();
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        setLoading(true);
+        const t = setTimeout(() => setLoading(false), 300);
+        return () => clearTimeout(t);
+    }, [location.pathname]);
+
+    return loading ? (
+        <div style={{
+            height: '3px',
+            background: 'linear-gradient(90deg, var(--btn-primary), #28a745, var(--btn-primary))',
+            backgroundSize: '200% 100%',
+            animation: 'route-loader 1.2s linear infinite'
+        }} />
+    ) : null;
+};
+
 // ── Main App ───────────────────────────────────────────────────────────────────
 function App() {
     const [user, setUser] = useState(() => {
@@ -291,6 +311,7 @@ function App() {
     return (
         <ThemeProvider>
             <Router>
+                <RouteLoader />
                 <Routes>
                     {/* Standalone reset page — no app chrome */}
                     <Route path="/reset-password" element={<ResetPasswordPage />} />
@@ -319,7 +340,7 @@ function App() {
                             </Routes>
 
                             <footer style={{ textAlign: 'center', marginTop: '50px', color: '#888', fontSize: '0.9rem' }}>
-                                <p>Open-Trivia</p>
+                                <p style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '6px' }}>Open-Trivia</p>
                                 <p style={{ margin: '6px 0 0' }}>
                                     Created by <a href="https://gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>gamedirection.net © 2026</a>
                                 </p>
@@ -327,8 +348,56 @@ function App() {
                                     Discord: <a href="https://join.gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>join.gamedirection.net</a>
                                 </p>
                                 <p style={{ margin: '6px 0 0' }}>
-                                    Credits: Alex Sierputowski @ <a href="https://gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>GameDirection.net</a>
+                                    GitHub: <a href="https://github.com/Gamedirection/Open-Trivia" style={{ color: '#007bff', textDecoration: 'none' }}>github.com/Gamedirection/Open-Trivia</a>
                                 </p>
+                                <p style={{ margin: '6px 0 0' }}>
+                                    License: <a href="https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE" style={{ color: '#007bff', textDecoration: 'none' }}>LICENSE</a>
+                                </p>
+
+                                <details style={{ marginTop: '12px' }}>
+                                    <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Creditation</summary>
+                                    <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '10px', marginTop: '10px' }}>
+                                        {[
+                                            { label: 'Facebook', url: 'https://www.facebook.com/GameDirection', letter: 'F' },
+                                            { label: 'Instagram', url: 'https://www.instagram.com/gamedirection_network/', letter: 'I' },
+                                            { label: 'LinkedIn', url: 'https://www.linkedin.com/company/91366950/', letter: 'L' },
+                                            { label: 'YouTube', url: 'https://www.youtube.com/channel/UCLoulV2vXP-XWWIryuggYmg?view_as=subscriber', letter: 'Y' },
+                                            { label: 'X', url: 'https://x.com/gamedirectionus', letter: 'X' },
+                                            { label: 'Bluesky', url: 'https://bsky.app/profile/gamedirection.net', letter: 'B' },
+                                            { label: 'Buy Me a Coffee', url: 'https://buymeacoffee.com/gamedirection', letter: '$' },
+                                        ].map((l) => (
+                                            <a key={l.url} href={l.url} title={l.label} style={{ textDecoration: 'none' }}>
+                                                <svg width="28" height="28" viewBox="0 0 28 28" role="img" aria-label={l.label}>
+                                                    <circle cx="14" cy="14" r="13" fill="var(--header-bg)" />
+                                                    <text x="14" y="18" textAnchor="middle" fontSize="14" fill="#fff" fontFamily="Arial, sans-serif">
+                                                        {l.letter}
+                                                    </text>
+                                                </svg>
+                                            </a>
+                                        ))}
+                                    </div>
+                                    <div style={{ margin: '12px auto 0', width: '60%' }}>
+                                        <a
+                                            href="https://buymeacoffee.com/gamedirection"
+                                            style={{
+                                                display: 'inline-block',
+                                                width: '100%',
+                                                backgroundColor: '#FFDD00',
+                                                color: '#000',
+                                                border: '2px solid #000',
+                                                padding: '6px 10px',
+                                                borderRadius: '8px',
+                                                textDecoration: 'none',
+                                                fontWeight: 'bold'
+                                            }}
+                                        >
+                                            Buy me a coffee
+                                        </a>
+                                    </div>
+                                    <div style={{ marginTop: '8px' }}>
+                                        Credits: Alex Sierputowski @ <a href="https://gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>GameDirection.net</a>
+                                    </div>
+                                </details>
                             </footer>
                         </div>
                     } />

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { gravatarUrl } from './utils/gravatar';
+import { cachedGet } from './utils/api';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
 export default function Leaderboard() {
     const [users, setUsers] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [categories, setCategories] = useState([]);
     const [categoryId, setCategoryId] = useState('');
     const [timeframe, setTimeframe] = useState('all');
@@ -24,7 +26,7 @@ export default function Leaderboard() {
 
     const fetchCategories = async () => {
         try {
-            const res = await axios.get(`${API_URL}/categories`);
+            const res = await cachedGet(axios, `${API_URL}/categories`, {}, 30000);
             setCategories(res.data || []);
         } catch (err) {
             console.error("Failed to load categories", err);
@@ -34,17 +36,19 @@ export default function Leaderboard() {
 
     const fetchLeaderboard = async () => {
         try {
-            setLoading(true);
+            if (users.length > 0) setRefreshing(true);
+            else setLoading(true);
             const params = {};
             if (categoryId) params.categoryId = categoryId;
             if (timeframe && timeframe !== 'all') params.timeframe = timeframe;
-            const res = await axios.get(`${API_URL}/leaderboard`, { params });
+            const res = await cachedGet(axios, `${API_URL}/leaderboard`, { params }, 5000);
             setUsers(res.data);
         } catch (err) {
             console.error("Failed to load leaderboard", err);
             setUsers([]); // Ensure state is always set
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     };
 
@@ -99,6 +103,9 @@ export default function Leaderboard() {
                         style={{ padding: '6px 12px', backgroundColor: '#6c757d', color: 'white' }}>
                         {resetting ? 'Resetting...' : 'Reset My Score'}
                     </button>
+                )}
+                {refreshing && (
+                    <span style={{ fontSize: '12px', color: '#888' }}>Refreshing…</span>
                 )}
             </div>
 

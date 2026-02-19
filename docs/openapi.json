@@ -1,0 +1,186 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Open-Trivia API",
+    "version": "0.1.0",
+    "description": "Open-Trivia backend API"
+  },
+  "servers": [
+    { "url": "/api" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" } }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "responses": {
+          "200": { "description": "OK" }
+        }
+      }
+    },
+    "/register": {
+      "post": {
+        "summary": "Register user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                },
+                "required": ["email", "password"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "User + token" } }
+      }
+    },
+    "/login": {
+      "post": {
+        "summary": "Login user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": { "type": "string" },
+                  "password": { "type": "string" }
+                },
+                "required": ["email", "password"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "User + token" } }
+      }
+    },
+    "/categories": {
+      "get": {
+        "summary": "List categories",
+        "responses": { "200": { "description": "Categories" } }
+      },
+      "post": {
+        "summary": "Create category (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "name": { "type": "string" } },
+                "required": ["name"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Category" } }
+      }
+    },
+    "/game/next": {
+      "get": {
+        "summary": "Fetch next question",
+        "parameters": [
+          { "name": "categoryId", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "responses": { "200": { "description": "Question" } }
+      }
+    },
+    "/game/submit": {
+      "post": {
+        "summary": "Submit answer",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "questionId": { "type": "integer" },
+                  "selectedAnswer": { "type": "string" },
+                  "elapsedMs": { "type": "integer" },
+                  "anonymousId": { "type": "integer" }
+                },
+                "required": ["questionId", "selectedAnswer"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Result" } }
+      }
+    },
+    "/leaderboard": {
+      "get": {
+        "summary": "Leaderboard",
+        "parameters": [
+          { "name": "categoryId", "in": "query", "schema": { "type": "integer" } },
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["day","month","year"] } }
+        ],
+        "responses": { "200": { "description": "Leaderboard rows" } }
+      }
+    },
+    "/me/stats": {
+      "get": {
+        "summary": "My stats",
+        "security": [{ "bearerAuth": [] }],
+        "parameters": [
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["day","month","year"] } }
+        ],
+        "responses": { "200": { "description": "Stats" } }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "summary": "List users (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Users" } }
+      }
+    },
+    "/admin/backup": {
+      "get": {
+        "summary": "List backups (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Backups" } }
+      },
+      "post": {
+        "summary": "Create backup (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Backup created" } }
+      }
+    },
+    "/admin/export": {
+      "get": {
+        "summary": "Export data (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Export JSON" } }
+      }
+    },
+    "/admin/import": {
+      "post": {
+        "summary": "Import data (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Import result" } }
+      }
+    }
+  }
+}

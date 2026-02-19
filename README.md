@@ -95,10 +95,10 @@ Credits: Alex Sierputowski @ GameDirection.net
 ## ✅ Epic 6 — API & Documentation
 *Focus: OpenAPI/Swagger, DX.*
 
-- [ ] Create an Open API endpoint documentation
+- [X] Create an Open API endpoint documentation
 
 **Notes**
-- [ ] Publish OpenAPI spec + Swagger UI  
+- [X] Publish OpenAPI spec + Swagger UI  
 - [ ] Document auth (security schemes), pagination, sorting, and filters  
 - [ ] Provide request/response examples for leaderboard and categories
 
@@ -107,11 +107,11 @@ Credits: Alex Sierputowski @ GameDirection.net
 ## ✅ Epic 7 — Data Management & Operations
 *Focus: backups, exports, audit.*
 
-- [ ] Backup button (internal)  
-- [ ] Export data button (external download)
+- [X] Backup button (internal)  
+- [X] Export data button (external download)
 
 **Notes**
-- [ ] Backups to secure storage, role-gated, audit-logged  
+- [X] Backups to secure storage, role-gated, audit-logged  
 - [ ] Exports as CSV/JSON; filters by date range/category; PII redaction options
 
 ---

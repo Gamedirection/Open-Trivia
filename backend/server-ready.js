@@ -5,6 +5,9 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 require('dotenv').config();
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
@@ -275,6 +278,12 @@ async function initDatabase() {
                 next_run TIMESTAMP,
                 last_run TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS backup_snapshots (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                note TEXT,
+                data JSONB NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS scoring_settings (
                 id SERIAL PRIMARY KEY,
                 min_points INT DEFAULT 5,
@@ -333,6 +342,12 @@ async function initDatabase() {
                 enabled BOOLEAN DEFAULT FALSE,
                 next_run TIMESTAMP,
                 last_run TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS backup_snapshots (
+                id SERIAL PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                note TEXT,
+                data JSONB NOT NULL
             )`,
             `CREATE TABLE IF NOT EXISTS scoring_settings (
                 id SERIAL PRIMARY KEY,
@@ -467,6 +482,105 @@ async function getScoringSettings() {
     return inserted.rows[0];
 }
 
+async function collectSnapshot() {
+    const tables = [
+        'users',
+        'categories',
+        'questions',
+        'pending_questions',
+        'game_sessions',
+        'question_reports',
+        'score_resets',
+        'leaderboard_schedules',
+        'scoring_settings',
+        'audit_logs',
+        'password_reset_tokens',
+    ];
+    const data = {};
+    for (const t of tables) {
+        const r = await pool.query(`SELECT * FROM ${t}`);
+        data[t] = r.rows;
+    }
+    return data;
+}
+
+async function applySnapshot(snapshot, mode = 'replace') {
+    const data = snapshot || {};
+    if (!data.users || !data.categories) {
+        throw new Error('Invalid snapshot data');
+    }
+    const tables = {
+        users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason'],
+        categories: ['id','name'],
+        questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled'],
+        pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','submitted_at','status'],
+        game_sessions: ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'],
+        question_reports: ['id','question_id','reason','reported_at'],
+        score_resets: ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'],
+        leaderboard_schedules: ['id','period','enabled','next_run','last_run'],
+        scoring_settings: ['id','min_points','max_easy','max_med','max_hard','fast_ms','slow_ms','diff_min_attempts','diff_up_threshold','diff_down_threshold','updated_at'],
+        audit_logs: ['id','admin_id','action','details','created_at'],
+        password_reset_tokens: ['id','user_id','token','expires_at','used','created_at'],
+    };
+
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        if (mode === 'replace') {
+            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, questions, categories, users RESTART IDENTITY CASCADE');
+        }
+
+        for (const [table, cols] of Object.entries(tables)) {
+            const rows = data[table] || [];
+            if (!rows.length) continue;
+            const values = [];
+            const params = [];
+            let idx = 1;
+            for (const row of rows) {
+                const rowParams = [];
+                for (const c of cols) {
+                    rowParams.push(`$${idx++}`);
+                    params.push(row[c] === undefined ? null : row[c]);
+                }
+                values.push(`(${rowParams.join(',')})`);
+            }
+            const sql = `INSERT INTO ${table} (${cols.join(',')}) VALUES ${values.join(',')}` +
+                (mode === 'merge' ? ` ON CONFLICT (id) DO UPDATE SET ${cols.filter(c => c !== 'id').map(c => `${c}=EXCLUDED.${c}`).join(',')}` : '');
+            await client.query(sql, params);
+        }
+
+        const seqs = [
+            'users_id_seq',
+            'categories_id_seq',
+            'questions_id_seq',
+            'pending_questions_id_seq',
+            'game_sessions_id_seq',
+            'question_reports_id_seq',
+            'score_resets_id_seq',
+            'leaderboard_schedules_id_seq',
+            'scoring_settings_id_seq',
+            'audit_logs_id_seq',
+            'password_reset_tokens_id_seq',
+            'backup_snapshots_id_seq',
+        ];
+        for (const s of seqs) {
+            try {
+                const table = s.replace('_id_seq', '');
+                await client.query(`SELECT setval('${s}', COALESCE((SELECT MAX(id) FROM ${table}), 0) + 1, false)`);
+            } catch {
+                // ignore missing sequences
+            }
+        }
+
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 // ── AUTH ───────────────────────────────────────────────────────────────────────
 app.post('/register', async (req, res) => {
     const { email, password } = req.body;
@@ -598,7 +712,14 @@ app.get('/categories/:catId/questions', async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
         const r = await pool.query(
-            'SELECT * FROM questions WHERE category_id=$1 ORDER BY id DESC',
+            `SELECT q.*,
+                    COUNT(gs.id)::int AS total_attempts,
+                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_attempts
+             FROM questions q
+             LEFT JOIN game_sessions gs ON gs.question_id = q.id
+             WHERE q.category_id=$1
+             GROUP BY q.id
+             ORDER BY q.id DESC`,
             [req.params.catId]
         );
         res.json(r.rows);
@@ -1062,6 +1183,235 @@ app.post('/admin/scoring-settings', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── ADMIN: DATA MANAGEMENT ────────────────────────────────────────────────────
+app.post('/admin/backup', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { note } = req.body || {};
+    try {
+        const data = await collectSnapshot();
+        const r = await pool.query(
+            'INSERT INTO backup_snapshots (note, data) VALUES ($1, $2) RETURNING id, created_at, note',
+            [note || null, data]
+        );
+        await auditLog(admin.id, 'BACKUP_CREATE', `Backup ${r.rows[0].id} created`);
+        res.json(r.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/backup', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const r = await pool.query('SELECT id, created_at, note FROM backup_snapshots ORDER BY created_at DESC');
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/backup/:id', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const r = await pool.query('SELECT id, created_at, note, data FROM backup_snapshots WHERE id=$1', [req.params.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Backup not found' });
+        res.json(r.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: QUESTIONS CSV ──────────────────────────────────────────────────────
+app.get('/admin/questions/csv', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const r = await pool.query(`
+            SELECT q.id, c.name AS category_name, q.text AS question_text,
+                   q.option_a, q.option_b, q.option_c, q.option_d,
+                   q.correct_answer, q.complexity, q.disabled
+            FROM questions q
+            JOIN categories c ON c.id = q.category_id
+            ORDER BY q.id ASC
+        `);
+        const header = ['id','category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled'];
+        const rows = r.rows.map(row => header.map(h => {
+            const v = row[h];
+            const s = v === null || v === undefined ? '' : String(v);
+            const needsQuotes = /[",\n]/.test(s);
+            return needsQuotes ? `"${s.replace(/"/g, '""')}"` : s;
+        }).join(','));
+        const csv = [header.join(','), ...rows].join(os.EOL);
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="questions_export.csv"');
+        res.send(csv);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/questions/template', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const templatePath = path.join(__dirname, 'exports', 'questions_template.csv');
+    try {
+        const raw = fs.readFileSync(templatePath, 'utf8');
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename="questions_template.csv"');
+        res.send(raw);
+    } catch {
+        res.status(404).json({ error: 'Template not found' });
+    }
+});
+
+app.post('/admin/questions/import-csv', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { csv } = req.body || {};
+    if (!csv || typeof csv !== 'string') return res.status(400).json({ error: 'Missing csv' });
+    try {
+        const lines = csv.split(/\r?\n/).filter(l => l.trim().length > 0);
+        if (lines.length < 2) return res.status(400).json({ error: 'CSV is empty' });
+        const header = lines[0].split(',').map(h => h.trim());
+        const required = ['category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity'];
+        for (const reqCol of required) {
+            if (!header.includes(reqCol)) return res.status(400).json({ error: `Missing column: ${reqCol}` });
+        }
+
+        const parseLine = (line) => {
+            const out = [];
+            let cur = '';
+            let inQuotes = false;
+            for (let i = 0; i < line.length; i++) {
+                const ch = line[i];
+                if (ch === '"' && (i === 0 || line[i - 1] !== '\\')) {
+                    if (inQuotes && line[i + 1] === '"') {
+                        cur += '"';
+                        i++;
+                    } else {
+                        inQuotes = !inQuotes;
+                    }
+                } else if (ch === ',' && !inQuotes) {
+                    out.push(cur);
+                    cur = '';
+                } else {
+                    cur += ch;
+                }
+            }
+            out.push(cur);
+            return out;
+        };
+
+        let inserted = 0;
+        for (let i = 1; i < lines.length; i++) {
+            const row = parseLine(lines[i]);
+            const obj = {};
+            header.forEach((h, idx) => { obj[h] = (row[idx] || '').trim(); });
+            if (!obj.question_text) continue;
+            const catName = obj.category_name || 'General';
+            let cat = (await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1)', [catName])).rows[0];
+            if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [catName])).rows[0];
+            await runQuery(
+                `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [
+                    cat.id,
+                    obj.question_text,
+                    obj.option_a,
+                    obj.option_b,
+                    obj.option_c,
+                    obj.option_d,
+                    String(obj.correct_answer || 'A').trim().toUpperCase().slice(0,1),
+                    (obj.complexity || 'medium').trim().toLowerCase()
+                ]
+            );
+            inserted++;
+        }
+        await auditLog(admin.id, 'QUESTIONS_IMPORT_CSV', `Imported ${inserted} questions`);
+        res.json({ success: true, inserted });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/export', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const data = await collectSnapshot();
+        res.json({ exported_at: new Date().toISOString(), data });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/import', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { data, mode } = req.body || {};
+    if (!data) return res.status(400).json({ error: 'Missing data' });
+    if (mode && !['replace', 'merge'].includes(mode)) return res.status(400).json({ error: 'Invalid mode' });
+    try {
+        await applySnapshot(data, mode || 'replace');
+        await auditLog(admin.id, 'DATA_IMPORT', `Import completed (${mode || 'replace'})`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/backup/restore-user', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { userId } = req.body || {};
+    const uid = parseInt(userId, 10);
+    if (!uid) return res.status(400).json({ error: 'Invalid userId' });
+    try {
+        const snap = await pool.query('SELECT data FROM backup_snapshots ORDER BY created_at DESC LIMIT 1');
+        if (!snap.rows.length) return res.status(404).json({ error: 'No backups available' });
+        const data = snap.rows[0].data || {};
+        const userRow = (data.users || []).find(u => u.id === uid);
+        if (!userRow) return res.status(404).json({ error: 'User not found in latest backup' });
+
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query('DELETE FROM game_sessions WHERE user_id=$1', [uid]);
+            await client.query('DELETE FROM score_resets WHERE user_id=$1', [uid]);
+            await client.query('DELETE FROM pending_questions WHERE user_id=$1', [uid]);
+            await client.query('DELETE FROM users WHERE id=$1', [uid]);
+            await client.query(
+                `INSERT INTO users (id,email,password_hash,role,score,is_anonymous,blocked_until,blocked_reason)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                [userRow.id, userRow.email, userRow.password_hash, userRow.role, userRow.score, userRow.is_anonymous, userRow.blocked_until, userRow.blocked_reason]
+            );
+
+            const restoreRows = async (table, cols, rows) => {
+                if (!rows.length) return;
+                const values = [];
+                const params = [];
+                let idx = 1;
+                for (const row of rows) {
+                    const rowParams = [];
+                    for (const c of cols) {
+                        rowParams.push(`$${idx++}`);
+                        params.push(row[c] === undefined ? null : row[c]);
+                    }
+                    values.push(`(${rowParams.join(',')})`);
+                }
+                await client.query(`INSERT INTO ${table} (${cols.join(',')}) VALUES ${values.join(',')}`, params);
+            };
+
+            const games = (data.game_sessions || []).filter(r => r.user_id === uid);
+            const resets = (data.score_resets || []).filter(r => r.user_id === uid);
+            const pending = (data.pending_questions || []).filter(r => r.user_id === uid);
+
+            await restoreRows('game_sessions', ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'], games);
+            await restoreRows('score_resets', ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'], resets);
+            await restoreRows('pending_questions', ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','submitted_at','status'], pending);
+
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK');
+            throw err;
+        } finally {
+            client.release();
+        }
+
+        await auditLog(admin.id, 'USER_RESTORE', `Restored user ${uid} from latest backup`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Admin resets a user's password directly
 app.post('/admin/users/:id/reset-password', async (req, res) => {
     const admin = requireAdmin(req, res);
@@ -1209,6 +1559,16 @@ app.get('/admin/audit-log', async (req, res) => {
 
 // ── HEALTH ─────────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/openapi.json', (_req, res) => {
+    const specPath = path.join(__dirname, '..', 'docs', 'openapi.json');
+    try {
+        const raw = fs.readFileSync(specPath, 'utf8');
+        res.setHeader('Content-Type', 'application/json');
+        res.send(raw);
+    } catch {
+        res.status(404).json({ error: 'OpenAPI spec not found' });
+    }
+});
 
 const PORT = process.env.PORT || 5000;
 initDatabase().then(() => {

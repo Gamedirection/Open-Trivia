@@ -1,30 +1,55 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import { cachedGet } from './utils/api';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
 export default function Dashboard() {
     const [stats, setStats] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [timeframe, setTimeframe] = useState('all');
     const token = localStorage.getItem('token');
+    const [resetting, setResetting] = useState(false);
 
     const fetchStats = async () => {
         if (!token) return;
-        setLoading(true);
+        if (stats) setRefreshing(true);
+        else setLoading(true);
         try {
             const params = {};
             if (timeframe !== 'all') params.timeframe = timeframe;
-            const res = await axios.get(`${API_URL}/me/stats`, {
+            const res = await cachedGet(axios, `${API_URL}/me/stats`, {
                 params,
                 headers: { Authorization: `Bearer ${token}` }
-            });
+            }, 5000);
             setStats(res.data);
         } catch (err) {
             console.error('Failed to load stats', err);
             setStats(null);
         } finally {
             setLoading(false);
+            setRefreshing(false);
+        }
+    };
+
+    const resetScore = async (categoryId) => {
+        if (!token) return;
+        const label = categoryId ? 'this category' : 'all categories';
+        if (!window.confirm(`Reset your stats for ${label}?`)) return;
+        setResetting(true);
+        try {
+            await axios.post(
+                `${API_URL}/me/reset-score`,
+                { categoryId: categoryId || null },
+                { headers: { Authorization: `Bearer ${token}` } }
+            );
+            await fetchStats();
+        } catch (err) {
+            console.error('Reset failed', err);
+            alert('Reset failed. Please try again.');
+        } finally {
+            setResetting(false);
         }
     };
 
@@ -58,6 +83,17 @@ export default function Dashboard() {
             <div className="card" style={{ marginBottom: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
                     <h2 style={{ margin: 0 }}>📊 My Stats</h2>
+                    <button
+                        className="btn"
+                        onClick={() => resetScore(null)}
+                        disabled={resetting}
+                        style={{ backgroundColor: '#6c757d', color: 'white', padding: '6px 12px' }}
+                    >
+                        {resetting ? 'Resetting...' : 'Reset All Stats'}
+                    </button>
+                    {refreshing && (
+                        <span style={{ fontSize: '12px', color: '#888' }}>Refreshing…</span>
+                    )}
                     <div>
                         <label style={{ fontSize: '12px', color: '#888' }}>Timeframe</label>
                         <div>
@@ -107,6 +143,7 @@ export default function Dashboard() {
                                     <th style={{ padding: '8px' }}>Correct</th>
                                     <th style={{ padding: '8px' }}>Answered</th>
                                     <th style={{ padding: '8px' }}>Accuracy</th>
+                                    <th style={{ padding: '8px' }}>Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -121,6 +158,16 @@ export default function Dashboard() {
                                             <td style={{ padding: '8px' }}>{corr}</td>
                                             <td style={{ padding: '8px' }}>{total}</td>
                                             <td style={{ padding: '8px' }}>{acc}%</td>
+                                            <td style={{ padding: '8px' }}>
+                                                <button
+                                                    className="btn"
+                                                    onClick={() => resetScore(c.category_id)}
+                                                    disabled={resetting}
+                                                    style={{ padding: '4px 10px', fontSize: '12px', backgroundColor: '#dc3545', color: 'white' }}
+                                                >
+                                                    Reset
+                                                </button>
+                                            </td>
                                         </tr>
                                     );
                                 })}

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import { cachedGet } from './utils/api';
 import RequestCardModal from './RequestCardModal';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
@@ -69,7 +70,7 @@ export default function Game() {
     useEffect(() => {
         const loadCategories = async () => {
             try {
-                const res = await axios.get(`${API_URL}/categories`);
+                const res = await cachedGet(axios, `${API_URL}/categories`, {}, 30000);
                 setCategories(res.data || []);
             } catch {
                 setCategories([]);

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { cachedGet } from './utils/api';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -58,7 +59,7 @@ export default function RequestCardModal({ onClose }) {
     useEffect(() => {
         const loadCategories = async () => {
             try {
-                const res = await axios.get(`${API_URL}/categories`);
+                const res = await cachedGet(axios, `${API_URL}/categories`, {}, 30000);
                 setCategories(res.data || []);
             } catch {
                 setCategories([]);

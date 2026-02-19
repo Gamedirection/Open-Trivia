@@ -173,6 +173,7 @@ export default function Admin() {
     const [selCat, setSelCat]         = useState(null);
     const [questions, setQuestions]   = useState([]);
     const [qLoading, setQLoading]     = useState(false);
+    const [qRefreshing, setQRefreshing] = useState(false);
     const [editingQ, setEditingQ]     = useState(null);
     const [newCatName, setNewCatName] = useState('');
     const [pending, setPending]       = useState([]);
@@ -191,6 +192,9 @@ export default function Admin() {
     // Scoring settings
     const [scoring, setScoring] = useState(null);
     const [scoringSaving, setScoringSaving] = useState(false);
+    // Data management
+    const [backups, setBackups] = useState([]);
+    const [backupLoading, setBackupLoading] = useState(false);
 
     const flash = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 3500); }, []);
 
@@ -203,12 +207,13 @@ export default function Admin() {
     }, []);
 
     const loadQuestions = useCallback(async (catId) => {
-        setQLoading(true); setQuestions([]);
+        if (questions.length > 0) setQRefreshing(true);
+        else setQLoading(true);
         try {
             const r = await axios.get(`${API_URL}/categories/${catId}/questions`, authCfg());
             setQuestions(r.data);
         } catch { flash('❌ Failed to load questions'); }
-        finally { setQLoading(false); }
+        finally { setQLoading(false); setQRefreshing(false); }
     }, []);
 
     const loadReview = useCallback(async () => {
@@ -249,6 +254,15 @@ export default function Admin() {
         finally { setLbLoading(false); }
     }, []);
 
+    const loadBackups = useCallback(async () => {
+        setBackupLoading(true);
+        try {
+            const r = await axios.get(`${API_URL}/admin/backup`, authCfg());
+            setBackups(r.data);
+        } catch { flash('❌ Failed to load backups'); }
+        finally { setBackupLoading(false); }
+    }, []);
+
     const loadScoringSettings = useCallback(async () => {
         try {
             const r = await axios.get(`${API_URL}/admin/scoring-settings`, authCfg());
@@ -263,6 +277,7 @@ export default function Admin() {
     useEffect(() => { if (tab === 'audit') loadAuditLog(); }, [tab]);
     useEffect(() => { if (tab === 'leaderboard') loadLeaderboardSchedule(); }, [tab]);
     useEffect(() => { if (tab === 'leaderboard') loadScoringSettings(); }, [tab]);
+    useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
 
     // ── Category actions ───────────────────────────────────────────────────────
     const addCategory = async () => {
@@ -425,6 +440,54 @@ export default function Admin() {
         finally { setScoringSaving(false); }
     };
 
+    const createBackup = async () => {
+        const note = window.prompt('Backup note (optional):', '');
+        try {
+            await axios.post(`${API_URL}/admin/backup`, { note: note || null }, authCfg());
+            flash('✅ Backup created');
+            loadBackups();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Backup failed')); }
+    };
+
+    const exportData = async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/export`, authCfg());
+            const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `open-trivia-export-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Export failed')); }
+    };
+
+    const importData = async (file, mode) => {
+        try {
+            const text = await file.text();
+            const payload = JSON.parse(text);
+            await axios.post(`${API_URL}/admin/import`, { data: payload.data || payload, mode }, authCfg());
+            flash('✅ Import completed');
+            loadBackups();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Import failed')); }
+    };
+
+    const restoreUser = async () => {
+        const input = window.prompt('Restore user by ID or email:', '');
+        if (!input) return;
+        let userId = Number(input);
+        if (!Number.isFinite(userId)) {
+            const u = users.find(x => x.email.toLowerCase() === String(input).toLowerCase());
+            if (!u) { flash('❌ User not found'); return; }
+            userId = u.id;
+        }
+        try {
+            await axios.post(`${API_URL}/admin/backup/restore-user`, { userId }, authCfg());
+            flash('✅ User restored from latest backup');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Restore failed')); }
+    };
+
     // ── Styles ─────────────────────────────────────────────────────────────────
     const tabStyle = (t) => ({
         padding: '9px 18px', borderRadius: '6px', border: 'none', cursor: 'pointer',
@@ -474,6 +537,7 @@ export default function Admin() {
                     )}
                 </button>
                 <button style={tabStyle('leaderboard')} onClick={() => setTab('leaderboard')}>🏆 Leaderboard</button>
+                <button style={tabStyle('data')} onClick={() => setTab('data')}>🗄️ Data</button>
                 <button style={tabStyle('audit')}      onClick={() => setTab('audit')}>📜 Audit Log</button>
             </div>
 
@@ -514,6 +578,7 @@ export default function Admin() {
                                     </div>
 
                                     {qLoading && <p style={{ color: '#888' }}>Loading...</p>}
+                                    {qRefreshing && <p style={{ color: '#888' }}>Refreshing...</p>}
 
                                     {!qLoading && questions.length === 0 && (
                                         <div style={{ ...cardStyle, textAlign: 'center', padding: '30px', color: '#888' }}>
@@ -537,6 +602,17 @@ export default function Admin() {
                                                             <Badge color={diffColor[q.complexity] || '#6c757d'} text={q.complexity} />
                                                             {q.disabled && <Badge color="#6c757d" text="disabled" />}
                                                             <span style={{ fontSize: '11px', color: '#aaa' }}>#{q.id}</span>
+                                                            <span style={{ fontSize: '11px', color: '#888' }}>
+                                                                Difficulty (auto): {String(q.complexity || '').toUpperCase()}
+                                                            </span>
+                                                        </div>
+                                                        <div style={{ fontSize: '12px', color: '#888', marginBottom: '6px' }}>
+                                                            {(() => {
+                                                                const total = q.total_attempts || 0;
+                                                                const correct = q.correct_attempts || 0;
+                                                                const pct = total > 0 ? Math.round((correct / total) * 100) : 0;
+                                                                return `Accuracy: ${pct}% (${correct}/${total})`;
+                                                            })()}
                                                         </div>
                                                         <p style={{ margin: '0 0 10px', fontWeight: '600', color: 'var(--text-color)', lineHeight: '1.4' }}>{q.text}</p>
                                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
@@ -924,6 +1000,151 @@ export default function Admin() {
                             ))}
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* ── DATA MANAGEMENT ─────────────────────────────────────────── */}
+            {tab === 'data' && (
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                        <h3 style={{ margin: 0 }}>🗄️ Data Management</h3>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button className="btn btn-primary" onClick={createBackup}>Create Backup</button>
+                            <button className="btn" onClick={exportData} style={{ backgroundColor: '#6c757d', color: 'white' }}>Export Data</button>
+                            <button className="btn" onClick={restoreUser} style={{ backgroundColor: '#ff9800', color: 'white' }}>Restore User</button>
+                        </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, marginBottom: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Import Data</h4>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <input
+                                type="file"
+                                accept="application/json"
+                                onChange={e => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const mode = window.confirm('Import mode: OK = replace, Cancel = merge') ? 'replace' : 'merge';
+                                    importData(file, mode);
+                                    e.target.value = '';
+                                }}
+                            />
+                            <span style={{ fontSize: '12px', color: '#888' }}>
+                                Replace will overwrite current data. Merge will upsert by ID.
+                            </span>
+                        </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, marginBottom: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Questions CSV</h4>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                            <button
+                                className="btn"
+                                onClick={async () => {
+                                    try {
+                                        const r = await axios.get(`${API_URL}/admin/questions/csv`, authCfg());
+                                        const blob = new Blob([r.data], { type: 'text/csv' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = 'questions_export.csv';
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                    } catch (e) { flash('❌ Export CSV failed'); }
+                                }}
+                            >
+                                Download CSV
+                            </button>
+                            <button
+                                className="btn"
+                                onClick={async () => {
+                                    try {
+                                        const r = await axios.get(`${API_URL}/admin/questions/template`, authCfg());
+                                        const blob = new Blob([r.data], { type: 'text/csv' });
+                                        const url = URL.createObjectURL(blob);
+                                        const a = document.createElement('a');
+                                        a.href = url;
+                                        a.download = 'questions_template.csv';
+                                        a.click();
+                                        URL.revokeObjectURL(url);
+                                    } catch (e) { flash('❌ Template download failed'); }
+                                }}
+                                style={{ backgroundColor: '#6c757d', color: 'white' }}
+                            >
+                                Download Template
+                            </button>
+                            <input
+                                type="file"
+                                accept=".csv,text/csv"
+                                onChange={e => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    const reader = new FileReader();
+                                    reader.onload = async () => {
+                                        try {
+                                            await axios.post(`${API_URL}/admin/questions/import-csv`, { csv: reader.result }, authCfg());
+                                            flash('✅ CSV imported');
+                                        } catch (err) {
+                                            flash('❌ CSV import failed');
+                                        }
+                                    };
+                                    reader.readAsText(file);
+                                    e.target.value = '';
+                                }}
+                            />
+                        </div>
+                    </div>
+
+                    <div style={{ ...cardStyle }}>
+                        <h4 style={{ marginTop: 0 }}>Backups</h4>
+                        {backupLoading ? (
+                            <p style={{ color: '#888' }}>Loading backups...</p>
+                        ) : backups.length === 0 ? (
+                            <p style={{ color: '#888' }}>No backups yet.</p>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '1px solid var(--border-color)', textAlign: 'left' }}>
+                                            <th style={{ padding: '8px' }}>ID</th>
+                                            <th style={{ padding: '8px' }}>Created</th>
+                                            <th style={{ padding: '8px' }}>Note</th>
+                                            <th style={{ padding: '8px' }}>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {backups.map(b => (
+                                            <tr key={b.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                <td style={{ padding: '8px' }}>{b.id}</td>
+                                                <td style={{ padding: '8px' }}>{new Date(b.created_at).toLocaleString()}</td>
+                                                <td style={{ padding: '8px' }}>{b.note || '—'}</td>
+                                                <td style={{ padding: '8px' }}>
+                                                    <button
+                                                        className="btn"
+                                                        style={{ padding: '4px 10px', fontSize: '12px' }}
+                                                        onClick={async () => {
+                                                            try {
+                                                                const r = await axios.get(`${API_URL}/admin/backup/${b.id}`, authCfg());
+                                                                const blob = new Blob([JSON.stringify(r.data, null, 2)], { type: 'application/json' });
+                                                                const url = URL.createObjectURL(blob);
+                                                                const a = document.createElement('a');
+                                                                a.href = url;
+                                                                a.download = `open-trivia-backup-${b.id}.json`;
+                                                                a.click();
+                                                                URL.revokeObjectURL(url);
+                                                            } catch (e) { flash('❌ Download failed'); }
+                                                        }}
+                                                    >
+                                                        Download
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
