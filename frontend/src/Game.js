@@ -328,7 +328,7 @@ export default function Game() {
                         onClick={() => handleAnswer(opt.char)}
                         disabled={!!answered}
                     >
-                        <strong>{opt.char})</strong> {opt.text}
+                        {opt.text}
                     </button>
                 ))}
             </div>

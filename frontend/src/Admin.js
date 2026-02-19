@@ -363,6 +363,30 @@ export default function Admin() {
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Role change failed')); }
     };
 
+    const blockUser = async (userId) => {
+        const minutesStr = window.prompt('Block duration in minutes (0 = forever):', '60');
+        if (minutesStr === null) return;
+        const minutes = Number(minutesStr);
+        if (!Number.isFinite(minutes) || minutes < 0) {
+            flash('❌ Invalid duration');
+            return;
+        }
+        const reason = window.prompt('Reason (optional):', '');
+        try {
+            await axios.post(`${API_URL}/admin/users/${userId}/block`, { minutes, reason }, authCfg());
+            flash('✅ User blocked');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Block failed')); }
+    };
+
+    const unblockUser = async (userId) => {
+        try {
+            await axios.post(`${API_URL}/admin/users/${userId}/unblock`, {}, authCfg());
+            flash('✅ User unblocked');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Unblock failed')); }
+    };
+
     // ── Leaderboard actions ───────────────────────────────────────────────────
     const setSchedule = async (period, enabled) => {
         try {
@@ -723,21 +747,26 @@ export default function Admin() {
                             {/* Registered users table */}
                             <div style={{ overflowX: 'auto' }}>
                                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                                    <thead>
-                                        <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>User</th>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Role</th>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Score</th>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Games</th>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Correct</th>
-                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Actions</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {realUsers.length === 0 && (
-                                            <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No users yet.</td></tr>
-                                        )}
-                                        {realUsers.map(u => (
+                            <thead>
+                                <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>User</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Role</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Score</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Games</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Correct</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Status</th>
+                                    <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {realUsers.length === 0 && (
+                                    <tr><td colSpan="7" style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No users yet.</td></tr>
+                                )}
+                                {realUsers.map(u => (
+                                    (() => {
+                                        const blockedUntil = u.blocked_until ? new Date(u.blocked_until) : null;
+                                        const isBlocked = blockedUntil && blockedUntil > new Date();
+                                        return (
                                             <tr key={u.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                                 <td style={{ padding: '10px 8px' }}>
                                                     <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{u.email.split('@')[0]}</div>
@@ -757,6 +786,15 @@ export default function Admin() {
                                                         : '—'}
                                                 </td>
                                                 <td style={{ padding: '10px 8px' }}>
+                                                    {isBlocked ? (
+                                                        <span style={{ color: '#dc3545', fontWeight: 'bold', fontSize: '12px' }}>
+                                                            Blocked{blockedUntil && blockedUntil.getFullYear() < 9999 ? ` until ${blockedUntil.toLocaleString()}` : ' (forever)'}
+                                                        </span>
+                                                    ) : (
+                                                        <span style={{ color: '#28a745', fontWeight: 'bold', fontSize: '12px' }}>Active</span>
+                                                    )}
+                                                </td>
+                                                <td style={{ padding: '10px 8px' }}>
                                                     <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                                                         <button
                                                             className="btn"
@@ -772,13 +810,32 @@ export default function Admin() {
                                                         >
                                                             {u.role === 'admin' ? '↓ Player' : '↑ Admin'}
                                                         </button>
+                                                        {isBlocked ? (
+                                                            <button
+                                                                className="btn"
+                                                                style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#28a745', color: 'white' }}
+                                                                onClick={() => unblockUser(u.id)}
+                                                            >
+                                                                ✅ Unblock
+                                                            </button>
+                                                        ) : (
+                                                            <button
+                                                                className="btn"
+                                                                style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#dc3545', color: 'white' }}
+                                                                onClick={() => blockUser(u.id)}
+                                                            >
+                                                                🚫 Block
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
+                                        );
+                                    })()
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
 
                             {/* Anonymous users section */}
                             {showAnon && anonUsers.length > 0 && (

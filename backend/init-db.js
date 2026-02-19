@@ -21,7 +21,9 @@ async function initDB() {
                 password_hash VARCHAR(255) NOT NULL,
                 role VARCHAR(50) DEFAULT 'player',
                 score INTEGER DEFAULT 0,
-                is_anonymous BOOLEAN DEFAULT FALSE
+                is_anonymous BOOLEAN DEFAULT FALSE,
+                blocked_until TIMESTAMP,
+                blocked_reason TEXT
             );
             
             CREATE TABLE IF NOT EXISTS categories (

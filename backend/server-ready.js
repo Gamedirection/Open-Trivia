@@ -160,9 +160,24 @@ function getTokenUser(req) {
         return jwt.verify(h.split(' ')[1], process.env.JWT_SECRET);
     } catch { return null; }
 }
-function requireAuth(req, res) {
+async function isUserBlocked(userId) {
+    const r = await pool.query('SELECT role, blocked_until FROM users WHERE id=$1', [userId]);
+    if (!r.rows.length) return false;
+    const row = r.rows[0];
+    if (row.role === 'admin') return false;
+    return !!(row.blocked_until && new Date(row.blocked_until) > new Date());
+}
+async function requireAuth(req, res) {
     const u = getTokenUser(req);
     if (!u) { res.status(401).json({ error: 'Authentication required' }); return null; }
+    try {
+        if (await isUserBlocked(u.id)) {
+            const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [u.id]);
+            return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+        }
+    } catch {
+        return res.status(500).json({ error: 'Auth check failed' });
+    }
     return u;
 }
 function requireAdmin(req, res) {
@@ -193,7 +208,9 @@ async function initDatabase() {
                 password_hash VARCHAR(255) NOT NULL,
                 role VARCHAR(50) DEFAULT 'player',
                 score INTEGER DEFAULT 0,
-                is_anonymous BOOLEAN DEFAULT FALSE
+                is_anonymous BOOLEAN DEFAULT FALSE,
+                blocked_until TIMESTAMP,
+                blocked_reason TEXT
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
@@ -294,6 +311,8 @@ async function initDatabase() {
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
             `ALTER TABLE question_reports ADD COLUMN IF NOT EXISTS reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason TEXT`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS category_id INT REFERENCES categories(id)`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
@@ -477,6 +496,9 @@ app.post('/login', async (req, res) => {
         if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
         const valid = await bcrypt.compare(password, r.rows[0].password_hash);
         if (!valid) return res.status(401).json({ error: 'Wrong password' });
+        if (r.rows[0].blocked_until && new Date(r.rows[0].blocked_until) > new Date()) {
+            return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0].blocked_until });
+        }
         const token = jwt.sign({ id: r.rows[0].id, role: r.rows[0].role }, process.env.JWT_SECRET, { expiresIn: '7d' });
         const { password_hash, ...user } = r.rows[0];
         res.json({ user, token });
@@ -659,9 +681,14 @@ app.get('/game/next', async (req, res) => {
 });
 
 app.post('/game/submit', async (req, res) => {
+    const authUser = getTokenUser(req);
     const { questionId, selectedAnswer, anonymousId, elapsedMs } = req.body;
     if (!questionId || !selectedAnswer) return res.status(400).json({ error: 'questionId and selectedAnswer required' });
     try {
+        if (authUser && await isUserBlocked(authUser.id)) {
+            const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [authUser.id]);
+            return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+        }
         const qr = await pool.query('SELECT correct_answer, category_id, complexity FROM questions WHERE id=$1', [questionId]);
         if (!qr.rows.length) return res.status(404).json({ error: 'Question not found' });
         const correctAnswer = qr.rows[0].correct_answer.trim().toUpperCase();
@@ -670,7 +697,7 @@ app.post('/game/submit', async (req, res) => {
         const isCorrect = selectedAnswer.toUpperCase() === correctAnswer;
         const scoring = await getScoringSettings();
         const points = isCorrect ? computePoints(Number(elapsedMs), complexity, scoring) : 0;
-        const u = getTokenUser(req);
+        const u = authUser;
 
         if (u) {
             // Authenticated user — track normally
@@ -712,7 +739,7 @@ app.post('/game/anonymous-session', async (req, res) => {
 
 // Report a question — requires authentication
 app.post('/game/report', async (req, res) => {
-    const u = requireAuth(req, res);
+    const u = await requireAuth(req, res);
     if (!u) return;
     const { questionId, reason } = req.body;
     if (!questionId) return res.status(400).json({ error: 'questionId required' });
@@ -793,7 +820,7 @@ app.get('/leaderboard', async (req, res) => {
 
 // ── USER: RESET SCORE ─────────────────────────────────────────────────────────-
 app.post('/me/reset-score', async (req, res) => {
-    const u = requireAuth(req, res);
+    const u = await requireAuth(req, res);
     if (!u) return;
     const { categoryId } = req.body || {};
     const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
@@ -810,7 +837,7 @@ app.post('/me/reset-score', async (req, res) => {
 
 // ── PENDING QUESTIONS — requires authentication ────────────────────────────────
 app.post('/pending-questions', async (req, res) => {
-    const u = requireAuth(req, res);
+    const u = await requireAuth(req, res);
     if (!u) return;
     const { categoryName, text, options, correctAnswer, complexity } = req.body;
     if (!categoryName || !text || !options || !correctAnswer || !complexity)
@@ -834,7 +861,7 @@ app.get('/admin/users', async (req, res) => {
     if (!admin) return;
     try {
         const r = await pool.query(`
-            SELECT u.id, u.email, u.role, u.is_anonymous,
+            SELECT u.id, u.email, u.role, u.is_anonymous, u.blocked_until, u.blocked_reason,
                    COALESCE(SUM(gs.points), 0)::int AS score,
                    COUNT(gs.id)::int AS games_played,
                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_answers
@@ -970,6 +997,41 @@ app.patch('/admin/users/:id/role', async (req, res) => {
         if (!userCheck.rows.length) return res.status(404).json({ error: 'User not found' });
         await runQuery('UPDATE users SET role=$1 WHERE id=$2', [role, req.params.id]);
         await auditLog(admin.id, 'ADMIN_CHANGE_ROLE', `Changed role to '${role}' for user ${userCheck.rows[0].email}`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Admin blocks/unblocks a user
+app.post('/admin/users/:id/block', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const userId = parseInt(req.params.id, 10);
+    const { minutes, reason } = req.body || {};
+    const mins = Number(minutes ?? 0);
+    if (!Number.isFinite(mins) || mins < 0) return res.status(400).json({ error: 'Invalid minutes' });
+    try {
+        const userCheck = await pool.query('SELECT role FROM users WHERE id=$1', [userId]);
+        if (!userCheck.rows.length) return res.status(404).json({ error: 'User not found' });
+        if (userCheck.rows[0].role === 'admin') return res.status(400).json({ error: 'Cannot block an admin' });
+        const blockedUntil = mins === 0
+            ? new Date('9999-12-31T23:59:59Z')
+            : new Date(Date.now() + mins * 60 * 1000);
+        await runQuery(
+            'UPDATE users SET blocked_until=$1, blocked_reason=$2 WHERE id=$3',
+            [blockedUntil, reason || null, userId]
+        );
+        await auditLog(admin.id, 'USER_BLOCK', `Blocked user ${userId} for ${mins === 0 ? 'forever' : mins + ' minutes'}`);
+        res.json({ success: true, blocked_until: blockedUntil });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/users/:id/unblock', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const userId = parseInt(req.params.id, 10);
+    try {
+        await runQuery('UPDATE users SET blocked_until=NULL, blocked_reason=NULL WHERE id=$1', [userId]);
+        await auditLog(admin.id, 'USER_UNBLOCK', `Unblocked user ${userId}`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
