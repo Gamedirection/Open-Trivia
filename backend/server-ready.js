@@ -14,6 +14,9 @@ const SCORE_MAX_MED = parseInt(process.env.SCORE_MAX_MED || '15', 10);
 const SCORE_MAX_HARD = parseInt(process.env.SCORE_MAX_HARD || '20', 10);
 const SCORE_FAST_MS = parseInt(process.env.SCORE_FAST_MS || '2000', 10);
 const SCORE_SLOW_MS = parseInt(process.env.SCORE_SLOW_MS || '20000', 10);
+const DIFF_MIN_ATTEMPTS = parseInt(process.env.DIFF_MIN_ATTEMPTS || '25', 10);
+const DIFF_UP_THRESHOLD = parseFloat(process.env.DIFF_UP_THRESHOLD || '0.4');
+const DIFF_DOWN_THRESHOLD = parseFloat(process.env.DIFF_DOWN_THRESHOLD || '0.8');
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 
@@ -33,6 +36,37 @@ function computePoints(elapsedMs, complexity, settings) {
     if (ms >= slowMs) return minPoints;
     const t = (ms - fastMs) / (slowMs - fastMs);
     return Math.round(maxPoints + (minPoints - maxPoints) * t);
+}
+
+async function adjustQuestionDifficulty(questionId, settings) {
+    const stats = await pool.query(`
+        SELECT q.complexity,
+               COUNT(gs.id)::int AS total,
+               COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct
+        FROM questions q
+        LEFT JOIN game_sessions gs ON gs.question_id = q.id
+        WHERE q.id = $1
+        GROUP BY q.id
+    `, [questionId]);
+    if (!stats.rows.length) return;
+    const { complexity, total, correct } = stats.rows[0];
+    const s = settings || {};
+    const minAttempts = Number(s.diff_min_attempts ?? DIFF_MIN_ATTEMPTS);
+    const upThreshold = Number(s.diff_up_threshold ?? DIFF_UP_THRESHOLD);
+    const downThreshold = Number(s.diff_down_threshold ?? DIFF_DOWN_THRESHOLD);
+    if (total < minAttempts) return;
+    const ratio = total > 0 ? (correct / total) : 0;
+
+    const order = ['easy', 'medium', 'hard'];
+    const idx = order.indexOf(String(complexity || '').toLowerCase());
+    if (idx === -1) return;
+
+    let nextIdx = idx;
+    if (ratio <= upThreshold && idx < order.length - 1) nextIdx = idx + 1;
+    if (ratio >= downThreshold && idx > 0) nextIdx = idx - 1;
+    if (nextIdx === idx) return;
+
+    await runQuery('UPDATE questions SET complexity=$1 WHERE id=$2', [order[nextIdx], questionId]);
 }
 
 // ── Mailer ─────────────────────────────────────────────────────────────────────
@@ -232,6 +266,9 @@ async function initDatabase() {
                 max_hard INT DEFAULT 20,
                 fast_ms INT DEFAULT 2000,
                 slow_ms INT DEFAULT 20000,
+                diff_min_attempts INT DEFAULT 25,
+                diff_up_threshold NUMERIC DEFAULT 0.4,
+                diff_down_threshold NUMERIC DEFAULT 0.8,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -286,8 +323,14 @@ async function initDatabase() {
                 max_hard INT DEFAULT 20,
                 fast_ms INT DEFAULT 2000,
                 slow_ms INT DEFAULT 20000,
+                diff_min_attempts INT DEFAULT 25,
+                diff_up_threshold NUMERIC DEFAULT 0.4,
+                diff_down_threshold NUMERIC DEFAULT 0.8,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_min_attempts INT DEFAULT 25`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_up_threshold NUMERIC DEFAULT 0.4`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_down_threshold NUMERIC DEFAULT 0.8`,
         ];
         for (const m of migrations) {
             try { await client.query(m); } catch(e) { console.log('Migration skipped:', e.message); }
@@ -387,10 +430,20 @@ async function getScoringSettings() {
     const r = await pool.query('SELECT * FROM scoring_settings ORDER BY id DESC LIMIT 1');
     if (r.rows.length) return r.rows[0];
     const inserted = await pool.query(`
-        INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms)
-        VALUES ($1,$2,$3,$4,$5,$6)
+        INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
         RETURNING *`,
-        [SCORE_MIN_POINTS, SCORE_MAX_EASY, SCORE_MAX_MED, SCORE_MAX_HARD, SCORE_FAST_MS, SCORE_SLOW_MS]
+        [
+            SCORE_MIN_POINTS,
+            SCORE_MAX_EASY,
+            SCORE_MAX_MED,
+            SCORE_MAX_HARD,
+            SCORE_FAST_MS,
+            SCORE_SLOW_MS,
+            DIFF_MIN_ATTEMPTS,
+            DIFF_UP_THRESHOLD,
+            DIFF_DOWN_THRESHOLD,
+        ]
     );
     return inserted.rows[0];
 }
@@ -578,11 +631,19 @@ app.delete('/questions/:id', async (req, res) => {
 });
 
 // ── GAME ───────────────────────────────────────────────────────────────────────
-app.get('/game/next', async (_req, res) => {
+app.get('/game/next', async (req, res) => {
+    const catParsed = req.query.categoryId ? parseInt(req.query.categoryId, 10) : NaN;
+    const catId = Number.isNaN(catParsed) ? null : catParsed;
     try {
-        const count = await pool.query('SELECT COUNT(*) FROM questions WHERE disabled=FALSE');
+        const count = await pool.query(
+            'SELECT COUNT(*) FROM questions WHERE disabled=FALSE AND ($1::int IS NULL OR category_id=$1)',
+            [catId]
+        );
         if (parseInt(count.rows[0].count) === 0) return res.json({ message: 'No questions available' });
-        const qr = await pool.query('SELECT * FROM questions WHERE disabled=FALSE ORDER BY RANDOM() LIMIT 1');
+        const qr = await pool.query(
+            'SELECT * FROM questions WHERE disabled=FALSE AND ($1::int IS NULL OR category_id=$1) ORDER BY RANDOM() LIMIT 1',
+            [catId]
+        );
         const q = qr.rows[0];
         const cat = await pool.query('SELECT name FROM categories WHERE id=$1', [q.category_id]);
         const options = [
@@ -618,6 +679,7 @@ app.post('/game/submit', async (req, res) => {
                 [u.id, questionId, categoryId, selectedAnswer, isCorrect, points]
             );
             if (points > 0) await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, u.id]);
+            adjustQuestionDifficulty(questionId, scoring).catch(() => {});
         } else if (anonymousId) {
             // Track under existing anonymous user record
             const anonUser = await pool.query('SELECT id FROM users WHERE id=$1 AND is_anonymous=TRUE', [anonymousId]);
@@ -627,6 +689,7 @@ app.post('/game/submit', async (req, res) => {
                     [anonUser.rows[0].id, questionId, categoryId, selectedAnswer, isCorrect, points]
                 );
                 if (points > 0) await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, anonUser.rows[0].id]);
+                adjustQuestionDifficulty(questionId, scoring).catch(() => {});
             }
         }
 
@@ -852,6 +915,9 @@ app.post('/admin/scoring-settings', async (req, res) => {
         max_hard,
         fast_ms,
         slow_ms,
+        diff_min_attempts,
+        diff_up_threshold,
+        diff_down_threshold,
     } = req.body || {};
     try {
         const vals = [
@@ -861,13 +927,16 @@ app.post('/admin/scoring-settings', async (req, res) => {
             Number(max_hard ?? SCORE_MAX_HARD),
             Number(fast_ms ?? SCORE_FAST_MS),
             Number(slow_ms ?? SCORE_SLOW_MS),
+            Number(diff_min_attempts ?? DIFF_MIN_ATTEMPTS),
+            Number(diff_up_threshold ?? DIFF_UP_THRESHOLD),
+            Number(diff_down_threshold ?? DIFF_DOWN_THRESHOLD),
         ];
         await runQuery(
-            `INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+            `INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
             vals
         );
-        await auditLog(admin.id, 'SCORING_SETTINGS_UPDATE', `min=${vals[0]}, easy=${vals[1]}, med=${vals[2]}, hard=${vals[3]}, fastMs=${vals[4]}, slowMs=${vals[5]}`);
+        await auditLog(admin.id, 'SCORING_SETTINGS_UPDATE', `min=${vals[0]}, easy=${vals[1]}, med=${vals[2]}, hard=${vals[3]}, fastMs=${vals[4]}, slowMs=${vals[5]}, diffMinAttempts=${vals[6]}, diffUp=${vals[7]}, diffDown=${vals[8]}`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

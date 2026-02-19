@@ -391,6 +391,9 @@ export default function Admin() {
                 max_hard: Number(scoring.max_hard),
                 fast_ms: Number(scoring.fast_ms),
                 slow_ms: Number(scoring.slow_ms),
+                diff_min_attempts: Number(scoring.diff_min_attempts),
+                diff_up_threshold: Number(scoring.diff_up_threshold),
+                diff_down_threshold: Number(scoring.diff_down_threshold),
             }, authCfg());
             flash('✅ Scoring settings saved');
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
@@ -958,6 +961,37 @@ export default function Admin() {
                                             type="number"
                                             value={scoring.slow_ms}
                                             onChange={e => setScoring({ ...scoring, slow_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Min Attempts</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.diff_min_attempts}
+                                            onChange={e => setScoring({ ...scoring, diff_min_attempts: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Up Threshold</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={scoring.diff_up_threshold}
+                                            onChange={e => setScoring({ ...scoring, diff_up_threshold: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Down Threshold</label>
+                                        <input
+                                            type="number"
+                                            step="0.01"
+                                            value={scoring.diff_down_threshold}
+                                            onChange={e => setScoring({ ...scoring, diff_down_threshold: e.target.value })}
                                             style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                         />
                                     </div>

@@ -47,15 +47,18 @@ Credits: Alex Sierputowski @ GameDirection.net
 - `SCORE_MAX_HARD` (default `20`)
 - `SCORE_FAST_MS` (default `2000`)
 - `SCORE_SLOW_MS` (default `20000`)
+- `DIFF_MIN_ATTEMPTS` (default `25`)
+- `DIFF_UP_THRESHOLD` (default `0.4`)
+- `DIFF_DOWN_THRESHOLD` (default `0.8`)
 
 ---
 
 ## ✅ Epic 3 — Categories & Visibility
 *Focus: category model, selection UI.*
 
-- [ ] Allow users to choose categories  
-- [ ] Improve category visibility (searchable dropdown + create new)  
-- [ ] (UI piece shared with Epic 2) Leaderboard category filter
+- [X] Allow users to choose categories  
+- [X] Improve category visibility (searchable dropdown + create new)  
+- [X] (UI piece shared with Epic 2) Leaderboard category filter
 
 **Notes**
 - [ ] Normalize categories, enforce uniqueness via slug  

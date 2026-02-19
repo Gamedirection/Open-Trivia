@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
@@ -9,6 +9,10 @@ export default function RequestCardModal({ onClose }) {
         optionA: '', optionB: '', optionC: '', optionD: '',
         correctAnswer: 'A', complexity: 'medium'
     });
+    const [categories, setCategories] = useState([]);
+    const [categorySearch, setCategorySearch] = useState('');
+    const [selectedCategoryId, setSelectedCategoryId] = useState('');
+    const [customCategory, setCustomCategory] = useState('');
     const [submitting, setSubmitting] = useState(false);
     const [success, setSuccess]       = useState(false);
 
@@ -16,8 +20,11 @@ export default function RequestCardModal({ onClose }) {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        const { categoryName, text, optionA, optionB, optionC, optionD } = form;
-        if (!categoryName.trim() || !text.trim() || !optionA.trim() || !optionB.trim() || !optionC.trim() || !optionD.trim())
+        const chosenCategory = customCategory.trim()
+            ? customCategory.trim()
+            : (categories.find(c => String(c.id) === String(selectedCategoryId))?.name || form.categoryName.trim());
+        const { text, optionA, optionB, optionC, optionD } = form;
+        if (!chosenCategory || !text.trim() || !optionA.trim() || !optionB.trim() || !optionC.trim() || !optionD.trim())
             return alert('Please fill in all fields.');
 
         setSubmitting(true);
@@ -26,7 +33,7 @@ export default function RequestCardModal({ onClose }) {
             await axios.post(
                 `${API_URL}/pending-questions`,
                 {
-                    categoryName: form.categoryName.trim(),
+                    categoryName: chosenCategory,
                     text: form.text.trim(),
                     options: { a: form.optionA, b: form.optionB, c: form.optionC, d: form.optionD },
                     correctAnswer: form.correctAnswer,
@@ -47,6 +54,22 @@ export default function RequestCardModal({ onClose }) {
         borderRadius: '6px', border: '1px solid var(--border-color)',
         backgroundColor: 'var(--card-bg)', color: 'var(--text-color)', fontSize: '14px'
     };
+
+    useEffect(() => {
+        const loadCategories = async () => {
+            try {
+                const res = await axios.get(`${API_URL}/categories`);
+                setCategories(res.data || []);
+            } catch {
+                setCategories([]);
+            }
+        };
+        loadCategories();
+    }, []);
+
+    const filteredCategories = categories.filter(c =>
+        c.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
+    );
 
     return (
         <div style={{
@@ -76,8 +99,30 @@ export default function RequestCardModal({ onClose }) {
                     <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                         <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Category</label>
-                            <input value={form.categoryName} onChange={set('categoryName')}
-                                placeholder="e.g. Science, History, Pop Culture" required style={iStyle} />
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                                <input
+                                    value={categorySearch}
+                                    onChange={e => setCategorySearch(e.target.value)}
+                                    placeholder="Search categories..."
+                                    style={iStyle}
+                                />
+                                <select
+                                    value={selectedCategoryId}
+                                    onChange={e => { setSelectedCategoryId(e.target.value); setCustomCategory(''); }}
+                                    style={iStyle}
+                                >
+                                    <option value="">Select a category</option>
+                                    {filteredCategories.map(c => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    value={customCategory}
+                                    onChange={e => { setCustomCategory(e.target.value); setSelectedCategoryId(''); }}
+                                    placeholder="Or create a new category..."
+                                    style={iStyle}
+                                />
+                            </div>
                         </div>
                         <div>
                             <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Question</label>

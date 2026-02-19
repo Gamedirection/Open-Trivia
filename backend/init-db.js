@@ -102,6 +102,9 @@ async function initDB() {
                 max_hard INT DEFAULT 20,
                 fast_ms INT DEFAULT 2000,
                 slow_ms INT DEFAULT 20000,
+                diff_min_attempts INT DEFAULT 25,
+                diff_up_threshold NUMERIC DEFAULT 0.4,
+                diff_down_threshold NUMERIC DEFAULT 0.8,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 

@@ -28,6 +28,9 @@ export default function Game() {
     const [answered, setAnswered] = useState(null);
     const [elapsedMs, setElapsedMs] = useState(0);
     const startRef = useRef(null);
+    const [categories, setCategories] = useState([]);
+    const [categorySearch, setCategorySearch] = useState('');
+    const [selectedCategoryId, setSelectedCategoryId] = useState('');
 
     const token = localStorage.getItem('token');
     const isLoggedIn = !!token;
@@ -35,7 +38,9 @@ export default function Game() {
     const fetchQuestion = async () => {
         setLoading(true);
         try {
-            const res = await axios.get(`${API_URL}/game/next`);
+            const params = {};
+            if (selectedCategoryId) params.categoryId = selectedCategoryId;
+            const res = await axios.get(`${API_URL}/game/next`, { params });
             if (!res.data || !res.data.id) {
                 setQuestion(null);
                 return;
@@ -55,6 +60,22 @@ export default function Game() {
 
     useEffect(() => {
         fetchQuestion();
+    }, []);
+
+    useEffect(() => {
+        if (selectedCategoryId !== '') fetchQuestion();
+    }, [selectedCategoryId]);
+
+    useEffect(() => {
+        const loadCategories = async () => {
+            try {
+                const res = await axios.get(`${API_URL}/categories`);
+                setCategories(res.data || []);
+            } catch {
+                setCategories([]);
+            }
+        };
+        loadCategories();
     }, []);
 
     useEffect(() => {
@@ -190,9 +211,52 @@ export default function Game() {
     }
 
     const complexityColors = { easy: '#28a745', medium: '#ffc107', hard: '#dc3545' };
+    const filteredCategories = categories.filter(c =>
+        c.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
+    );
 
     return (
         <div className="card" style={{ position: 'relative' }}>
+            {/* Category filter */}
+            <div style={{
+                display: 'flex', gap: '10px', flexWrap: 'wrap',
+                alignItems: 'center', marginBottom: '16px'
+            }}>
+                <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '4px' }}>
+                        Search Categories
+                    </label>
+                    <input
+                        value={categorySearch}
+                        onChange={e => setCategorySearch(e.target.value)}
+                        placeholder="Type to filter..."
+                        style={{
+                            padding: '6px 8px', borderRadius: '6px',
+                            border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)',
+                            color: 'var(--text-color)', width: '200px'
+                        }}
+                    />
+                </div>
+                <div>
+                    <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '4px' }}>
+                        Category
+                    </label>
+                    <select
+                        value={selectedCategoryId}
+                        onChange={e => setSelectedCategoryId(e.target.value)}
+                        style={{
+                            padding: '6px 8px', borderRadius: '6px',
+                            border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)',
+                            color: 'var(--text-color)', minWidth: '200px'
+                        }}
+                    >
+                        <option value="">All Categories</option>
+                        {filteredCategories.map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
 
             {/* Category + Difficulty header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', gap: '10px', flexWrap: 'wrap' }}>
