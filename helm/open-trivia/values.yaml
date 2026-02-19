@@ -1,10 +1,10 @@
 image:
   frontend:
     repository: ghcr.io/gamedirection/open-trivia-frontend
-    tag: "v0.2.0"
+    tag: "v0.2.1"
   backend:
     repository: ghcr.io/gamedirection/open-trivia-backend
-    tag: "v0.2.0"
+    tag: "v0.2.1"
 
 frontend:
   service:

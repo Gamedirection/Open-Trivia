@@ -82,8 +82,8 @@ helm install open-trivia helm/open-trivia
 Override values:
 ```bash
 helm install open-trivia helm/open-trivia \
-  --set image.frontend.tag=v0.2.0 \
-  --set image.backend.tag=v0.2.0 \
+  --set image.frontend.tag=v0.2.1 \
+  --set image.backend.tag=v0.2.1 \
   --set backend.env.JWT_SECRET=change-me
 ```
 
