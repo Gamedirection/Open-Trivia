@@ -1,0 +1,113 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=trivia_user
+      - POSTGRES_PASSWORD=trivia_pass
+      - POSTGRES_DB=trivia_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3009:3000"
+    depends_on:
+      - backend
+    environment:
+      - REACT_APP_API_URL=/api
+#      - REACT_APP_API_URL=http://localhost:5000/api
+#      - REACT_APP_API_URL=http://backend:5000/api
+
+  backend:
+    build: ./backend
+    ports:
+      - "5000:5000"
+    #secrets: # DockerSwarm
+    #  - smtp_host
+    #  - smtp_user
+    #  - smtp_pass
+    environment:
+      - PG_HOST=db
+      - PG_PORT=5432
+      - PG_USER=trivia_user
+      - PG_PASSWORD=trivia_pass
+      - PG_DB=trivia_db
+      - JWT_SECRET=LW3u9ojVDxZUYku7Kks6ZUS3PMw3A6K3
+
+      # ── Email / SMTP ──────────────────────────────────────────────────────────
+      # The public URL of your frontend (used to build the reset link in emails).
+      # Change this to your domain in production, e.g. https://trivia.example.com
+      - APP_URL=http://localhost:3009
+
+      # Leave SMTP_HOST blank (or remove these lines entirely) to disable outbound
+      # email. The backend will fall back to logging reset tokens to stdout, and
+      # the frontend will show the token directly so the app still works.
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=587
+      # Set SMTP_SECURE=true only for port 465 (implicit TLS). Leave false for
+      # port 587 (STARTTLS) or port 25.
+      - SMTP_SECURE=false
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      # Displayed in the From: header. Defaults to noreply@<SMTP_HOST> if blank.
+      - SMTP_FROM= # noreply<@SMTP_HOST>
+
+      # ── Common provider examples (uncomment and fill in one block) ────────────
+
+      # Gmail (use an App Password, not your account password):
+      # - SMTP_HOST=smtp.gmail.com
+      # - SMTP_PORT=587
+      # - SMTP_SECURE=false
+      # - SMTP_USER=you@gmail.com
+      # - SMTP_PASS=your-app-password
+
+      # Outlook / Office 365:
+      # - SMTP_HOST=smtp.office365.com
+      # - SMTP_PORT=587
+      # - SMTP_SECURE=false
+      # - SMTP_USER=you@outlook.com
+      # - SMTP_PASS=your-password
+
+      # Mailgun (SMTP relay):
+      # - SMTP_HOST=smtp.mailgun.org
+      # - SMTP_PORT=587
+      # - SMTP_SECURE=false
+      # - SMTP_USER=postmaster@mg.yourdomain.com
+      # - SMTP_PASS=your-mailgun-smtp-password
+
+      # SendGrid:
+      # - SMTP_HOST=smtp.sendgrid.net
+      # - SMTP_PORT=587
+      # - SMTP_SECURE=false
+      # - SMTP_USER=apikey
+      # - SMTP_PASS=your-sendgrid-api-key
+
+      # Brevo (formerly Sendinblue):
+      # - SMTP_HOST=smtp-relay.brevo.com
+      # - SMTP_PORT=587
+      # - SMTP_SECURE=false
+      # - SMTP_USER=your-brevo-login
+      # - SMTP_PASS=your-brevo-smtp-key
+
+      # Self-hosted (e.g. Postfix, Mailcow) — no auth:
+      # - SMTP_HOST=mail.yourdomain.com
+      # - SMTP_PORT=25
+      # - SMTP_SECURE=false
+      # - SMTP_USER=
+      # - SMTP_PASS=
+
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
+
+# DockerSwarm
+#secrets:
+#  smtp_host:
+#    file: ./secrets/smtp_host.txt
+#  smtp_user:
+#    file: ./secrets/smtp_user.txt
+#  smtp_pass:
+#    file: ./secrets/smtp_pass.txt

@@ -1,0 +1,21 @@
+{
+  "name": "Open-Trivia",
+  "short_name": "Open-Trivia",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#007bff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "https://via.placeholder.com/192x192/007bff/ffffff?text=TM",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://via.placeholder.com/512x512/007bff/ffffff?text=TM",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+:root {
+  --bg-color: #f0f2f5;
+  --card-bg: #ffffff;
+  --text-color: #333333;
+  --header-bg: #007bff;
+  --header-text: #ffffff;
+  --btn-primary: #007bff;
+  --border-color: #e0e0e0;
+}
+
+/* Dark Mode Overrides */
+.dark {
+  --bg-color: #121212;
+  --card-bg: #1e1e1e;
+  --text-color: #e0e0e0;
+  --header-bg: #333333;
+  --header-text: #e0e0e0;
+  --btn-primary: #4dabf7;
+  --border-color: #444444;
+}
+
+/* Base Styles for the whole container */
+.container {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  transition: all 0.3s ease;
+}
+
+/* Ensure Cards inherit the theme */
+.card {
+  background-color: var(--card-bg);
+  color: var(--text-color);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+/* Buttons */
+.btn {
+  color: var(--text-color);
+}
+.btn-primary {
+  background-color: var(--btn-primary);
+  color: white;
+}
