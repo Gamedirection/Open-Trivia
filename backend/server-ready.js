@@ -7,6 +7,34 @@ const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
+// ── Scoring ───────────────────────────────────────────────────────────────────
+const SCORE_MIN_POINTS = parseInt(process.env.SCORE_MIN_POINTS || '5', 10);
+const SCORE_MAX_EASY = parseInt(process.env.SCORE_MAX_EASY || '10', 10);
+const SCORE_MAX_MED = parseInt(process.env.SCORE_MAX_MED || '15', 10);
+const SCORE_MAX_HARD = parseInt(process.env.SCORE_MAX_HARD || '20', 10);
+const SCORE_FAST_MS = parseInt(process.env.SCORE_FAST_MS || '2000', 10);
+const SCORE_SLOW_MS = parseInt(process.env.SCORE_SLOW_MS || '20000', 10);
+
+function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
+
+function computePoints(elapsedMs, complexity, settings) {
+    const s = settings || {};
+    const maxByDifficulty = {
+        easy: Number(s.max_easy ?? SCORE_MAX_EASY),
+        medium: Number(s.max_med ?? SCORE_MAX_MED),
+        hard: Number(s.max_hard ?? SCORE_MAX_HARD),
+    };
+    const maxPoints = maxByDifficulty[String(complexity || '').toLowerCase()] ?? Number(s.max_med ?? SCORE_MAX_MED);
+    const minPoints = Math.min(Number(s.min_points ?? SCORE_MIN_POINTS), maxPoints);
+    const ms = Number.isFinite(elapsedMs) ? elapsedMs : SCORE_SLOW_MS;
+    const fastMs = Number(s.fast_ms ?? SCORE_FAST_MS);
+    const slowMs = Number(s.slow_ms ?? SCORE_SLOW_MS);
+    if (ms <= fastMs) return maxPoints;
+    if (ms >= slowMs) return minPoints;
+    const t = (ms - fastMs) / (slowMs - fastMs);
+    return Math.round(maxPoints + (minPoints - maxPoints) * t);
+}
+
 // ── Mailer ─────────────────────────────────────────────────────────────────────
 // All SMTP settings come from environment variables. If SMTP_HOST is not set,
 // the mailer falls back to logging the token to stdout (dev/no-email mode).
@@ -168,14 +196,43 @@ async function initDatabase() {
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id),
                 question_id INT REFERENCES questions(id),
+                category_id INT REFERENCES categories(id),
                 selected_answer CHAR(1),
-                is_correct BOOLEAN
+                is_correct BOOLEAN,
+                points INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS question_reports (
                 id SERIAL PRIMARY KEY,
                 question_id INT REFERENCES questions(id) ON DELETE CASCADE,
                 reason TEXT,
                 reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS score_resets (
+                id SERIAL PRIMARY KEY,
+                scope VARCHAR(20) NOT NULL, -- user|global
+                user_id INT REFERENCES users(id),
+                category_id INT REFERENCES categories(id),
+                reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reset_by_admin_id INT REFERENCES users(id),
+                reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS leaderboard_schedules (
+                id SERIAL PRIMARY KEY,
+                period VARCHAR(20) UNIQUE NOT NULL, -- daily|weekly|monthly|yearly
+                enabled BOOLEAN DEFAULT FALSE,
+                next_run TIMESTAMP,
+                last_run TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS scoring_settings (
+                id SERIAL PRIMARY KEY,
+                min_points INT DEFAULT 5,
+                max_easy INT DEFAULT 10,
+                max_med INT DEFAULT 15,
+                max_hard INT DEFAULT 20,
+                fast_ms INT DEFAULT 2000,
+                slow_ms INT DEFAULT 20000,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id SERIAL PRIMARY KEY,
@@ -200,6 +257,37 @@ async function initDatabase() {
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
             `ALTER TABLE question_reports ADD COLUMN IF NOT EXISTS reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE`,
+            `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS category_id INT REFERENCES categories(id)`,
+            `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`,
+            `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
+            `CREATE INDEX IF NOT EXISTS idx_game_sessions_user_created ON game_sessions(user_id, created_at)`,
+            `CREATE INDEX IF NOT EXISTS idx_game_sessions_category_created ON game_sessions(category_id, created_at)`,
+            `CREATE TABLE IF NOT EXISTS score_resets (
+                id SERIAL PRIMARY KEY,
+                scope VARCHAR(20) NOT NULL,
+                user_id INT REFERENCES users(id),
+                category_id INT REFERENCES categories(id),
+                reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                reset_by_admin_id INT REFERENCES users(id),
+                reason TEXT
+            )`,
+            `CREATE TABLE IF NOT EXISTS leaderboard_schedules (
+                id SERIAL PRIMARY KEY,
+                period VARCHAR(20) UNIQUE NOT NULL,
+                enabled BOOLEAN DEFAULT FALSE,
+                next_run TIMESTAMP,
+                last_run TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS scoring_settings (
+                id SERIAL PRIMARY KEY,
+                min_points INT DEFAULT 5,
+                max_easy INT DEFAULT 10,
+                max_med INT DEFAULT 15,
+                max_hard INT DEFAULT 20,
+                fast_ms INT DEFAULT 2000,
+                slow_ms INT DEFAULT 20000,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
         ];
         for (const m of migrations) {
             try { await client.query(m); } catch(e) { console.log('Migration skipped:', e.message); }
@@ -241,6 +329,71 @@ const app = express();
 app.use(cors({ origin: ['http://localhost:3009','http://localhost:3000'], credentials: true }));
 app.use(express.json());
 app.use((req, _res, next) => { console.log(`📨 ${req.method} ${req.path}`); next(); });
+
+// ── Leaderboard Scheduler ─────────────────────────────────────────────────────
+function computeNextRun(period, fromDate = new Date()) {
+    const d = new Date(fromDate);
+    if (period === 'daily') {
+        d.setDate(d.getDate() + 1);
+        d.setHours(0, 0, 0, 0);
+        return d;
+    }
+    if (period === 'weekly') {
+        const day = d.getDay(); // 0=Sun
+        const daysUntilMonday = (8 - (day || 7));
+        d.setDate(d.getDate() + daysUntilMonday);
+        d.setHours(0, 0, 0, 0);
+        return d;
+    }
+    if (period === 'monthly') {
+        return new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    }
+    if (period === 'yearly') {
+        return new Date(d.getFullYear() + 1, 0, 1);
+    }
+    return null;
+}
+
+async function runScheduledResets() {
+    try {
+        const due = await pool.query(
+            `SELECT id, period FROM leaderboard_schedules
+             WHERE enabled=TRUE AND next_run IS NOT NULL AND next_run <= NOW()`
+        );
+        for (const row of due.rows) {
+            await runQuery(
+                `INSERT INTO score_resets (scope, reason)
+                 VALUES ('global', $1)`,
+                [`scheduled_${row.period}`]
+            );
+            await runQuery(
+                `UPDATE leaderboard_schedules
+                 SET last_run = NOW(), next_run = $2
+                 WHERE id = $1`,
+                [row.id, computeNextRun(row.period, new Date())]
+            );
+            await runQuery(
+                `INSERT INTO audit_logs (admin_id, action, details)
+                 VALUES ($1, $2, $3)`,
+                [null, 'LEADERBOARD_RESET_SCHEDULED', `Scheduled ${row.period} reset executed`]
+            );
+        }
+    } catch (err) {
+        console.error('❌ Scheduled reset check failed:', err.message);
+    }
+}
+
+async function getScoringSettings() {
+    const r = await pool.query('SELECT * FROM scoring_settings ORDER BY id DESC LIMIT 1');
+    if (r.rows.length) return r.rows[0];
+    const inserted = await pool.query(`
+        INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        RETURNING *`,
+        [SCORE_MIN_POINTS, SCORE_MAX_EASY, SCORE_MAX_MED, SCORE_MAX_HARD, SCORE_FAST_MS, SCORE_SLOW_MS]
+    );
+    return inserted.rows[0];
+}
 
 // ── AUTH ───────────────────────────────────────────────────────────────────────
 app.post('/register', async (req, res) => {
@@ -445,35 +598,39 @@ app.get('/game/next', async (_req, res) => {
 });
 
 app.post('/game/submit', async (req, res) => {
-    const { questionId, selectedAnswer, anonymousId } = req.body;
+    const { questionId, selectedAnswer, anonymousId, elapsedMs } = req.body;
     if (!questionId || !selectedAnswer) return res.status(400).json({ error: 'questionId and selectedAnswer required' });
     try {
-        const qr = await pool.query('SELECT correct_answer FROM questions WHERE id=$1', [questionId]);
+        const qr = await pool.query('SELECT correct_answer, category_id, complexity FROM questions WHERE id=$1', [questionId]);
         if (!qr.rows.length) return res.status(404).json({ error: 'Question not found' });
         const correctAnswer = qr.rows[0].correct_answer.trim().toUpperCase();
+        const categoryId = qr.rows[0].category_id;
+        const complexity = qr.rows[0].complexity;
         const isCorrect = selectedAnswer.toUpperCase() === correctAnswer;
+        const scoring = await getScoringSettings();
+        const points = isCorrect ? computePoints(Number(elapsedMs), complexity, scoring) : 0;
         const u = getTokenUser(req);
 
         if (u) {
             // Authenticated user — track normally
             await pool.query(
-                'INSERT INTO game_sessions (user_id,question_id,selected_answer,is_correct) VALUES ($1,$2,$3,$4)',
-                [u.id, questionId, selectedAnswer, isCorrect]
+                'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points) VALUES ($1,$2,$3,$4,$5,$6)',
+                [u.id, questionId, categoryId, selectedAnswer, isCorrect, points]
             );
-            if (isCorrect) await pool.query('UPDATE users SET score=score+10 WHERE id=$1', [u.id]);
+            if (points > 0) await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, u.id]);
         } else if (anonymousId) {
             // Track under existing anonymous user record
             const anonUser = await pool.query('SELECT id FROM users WHERE id=$1 AND is_anonymous=TRUE', [anonymousId]);
             if (anonUser.rows.length) {
                 await pool.query(
-                    'INSERT INTO game_sessions (user_id,question_id,selected_answer,is_correct) VALUES ($1,$2,$3,$4)',
-                    [anonUser.rows[0].id, questionId, selectedAnswer, isCorrect]
+                    'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points) VALUES ($1,$2,$3,$4,$5,$6)',
+                    [anonUser.rows[0].id, questionId, categoryId, selectedAnswer, isCorrect, points]
                 );
-                if (isCorrect) await pool.query('UPDATE users SET score=score+10 WHERE id=$1', [anonUser.rows[0].id]);
+                if (points > 0) await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, anonUser.rows[0].id]);
             }
         }
 
-        res.json({ isCorrect, correctAnswer });
+        res.json({ isCorrect, correctAnswer, pointsAwarded: points });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -505,14 +662,87 @@ app.post('/game/report', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── LEADERBOARD — excludes anonymous users ─────────────────────────────────────
-app.get('/leaderboard', async (_req, res) => {
-    try {
-        res.json((await pool.query(
-            'SELECT id,email,score,role FROM users WHERE is_anonymous=FALSE ORDER BY score DESC LIMIT 50'
-        )).rows);
+// ── LEADERBOARD — excludes anonymous users and admins ──────────────────────────
+app.get('/leaderboard', async (req, res) => {
+    const { categoryId, timeframe } = req.query;
+    const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
+    const catId = Number.isNaN(catParsed) ? null : catParsed;
+    const now = new Date();
+    let start = new Date(0);
+    if (timeframe === 'day') {
+        start = new Date(now); start.setHours(0, 0, 0, 0);
+    } else if (timeframe === 'month') {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (timeframe === 'year') {
+        start = new Date(now.getFullYear(), 0, 1);
     }
-    catch (err) { res.status(500).json({ error: err.message }); }
+    try {
+        const r = await pool.query(`
+            WITH global_reset AS (
+                SELECT MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='global'
+                  AND ($1::int IS NULL OR category_id = $1)
+            ),
+            user_reset AS (
+                SELECT user_id, MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='user'
+                  AND ($1::int IS NULL OR category_id = $1)
+                GROUP BY user_id
+            ),
+            scores AS (
+                SELECT
+                    gs.user_id,
+                    SUM(gs.points)::int AS score,
+                    COUNT(gs.id)::int AS total_answered,
+                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_answered
+                FROM game_sessions gs
+                JOIN users u ON u.id = gs.user_id
+                LEFT JOIN user_reset ur ON ur.user_id = gs.user_id
+                CROSS JOIN global_reset gr
+                WHERE u.is_anonymous = FALSE
+                  AND u.role != 'admin'
+                  AND ($1::int IS NULL OR gs.category_id = $1)
+                  AND gs.created_at >= GREATEST(
+                        COALESCE(gr.ts, '1970-01-01'),
+                        COALESCE(ur.ts, '1970-01-01'),
+                        $2::timestamp
+                  )
+                GROUP BY gs.user_id
+            )
+            SELECT
+                u.id,
+                u.email,
+                COALESCE(s.score, 0) AS score,
+                COALESCE(s.correct_answered, 0) AS correct_answered,
+                COALESCE(s.total_answered, 0) AS total_answered,
+                u.role
+            FROM users u
+            LEFT JOIN scores s ON s.user_id = u.id
+            WHERE u.is_anonymous = FALSE AND u.role != 'admin'
+            ORDER BY score DESC, u.email ASC
+            LIMIT 50
+        `, [catId, start]);
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── USER: RESET SCORE ─────────────────────────────────────────────────────────-
+app.post('/me/reset-score', async (req, res) => {
+    const u = requireAuth(req, res);
+    if (!u) return;
+    const { categoryId } = req.body || {};
+    const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
+    const catId = Number.isNaN(catParsed) ? null : catParsed;
+    try {
+        await runQuery(
+            `INSERT INTO score_resets (scope, user_id, category_id, reason)
+             VALUES ('user', $1, $2, $3)`,
+            [u.id, catId, 'user_reset']
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── PENDING QUESTIONS — requires authentication ────────────────────────────────
@@ -541,15 +771,104 @@ app.get('/admin/users', async (req, res) => {
     if (!admin) return;
     try {
         const r = await pool.query(`
-            SELECT u.id, u.email, u.role, u.score, u.is_anonymous,
+            SELECT u.id, u.email, u.role, u.is_anonymous,
+                   COALESCE(SUM(gs.points), 0)::int AS score,
                    COUNT(gs.id)::int AS games_played,
                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_answers
             FROM users u
             LEFT JOIN game_sessions gs ON gs.user_id = u.id
             GROUP BY u.id
-            ORDER BY u.is_anonymous ASC, u.score DESC
+            ORDER BY u.is_anonymous ASC, score DESC
         `);
         res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: LEADERBOARD RESET & SCHEDULER ───────────────────────────────────────
+app.post('/admin/leaderboard/reset', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { categoryId, reason } = req.body || {};
+    const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
+    const catId = Number.isNaN(catParsed) ? null : catParsed;
+    try {
+        await runQuery(
+            `INSERT INTO score_resets (scope, category_id, reset_by_admin_id, reason)
+             VALUES ('global', $1, $2, $3)`,
+            [catId, admin.id, reason || 'admin_reset']
+        );
+        await auditLog(admin.id, 'LEADERBOARD_RESET', `Global reset${catId ? ` for category ${catId}` : ''}`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/leaderboard/schedule', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const r = await pool.query('SELECT period, enabled, next_run, last_run FROM leaderboard_schedules ORDER BY period');
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/leaderboard/schedule', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { period, enabled } = req.body || {};
+    if (!['daily', 'weekly', 'monthly', 'yearly'].includes(period)) {
+        return res.status(400).json({ error: 'Invalid period' });
+    }
+    try {
+        const nextRun = enabled ? computeNextRun(period, new Date()) : null;
+        await runQuery(
+            `INSERT INTO leaderboard_schedules (period, enabled, next_run)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (period)
+             DO UPDATE SET enabled = EXCLUDED.enabled, next_run = EXCLUDED.next_run`,
+            [period, !!enabled, nextRun]
+        );
+        await auditLog(admin.id, 'LEADERBOARD_SCHEDULE_UPDATE', `${period} schedule ${enabled ? 'enabled' : 'disabled'}`);
+        res.json({ success: true, nextRun });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: SCORING SETTINGS ───────────────────────────────────────────────────
+app.get('/admin/scoring-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getScoringSettings();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/scoring-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const {
+        min_points,
+        max_easy,
+        max_med,
+        max_hard,
+        fast_ms,
+        slow_ms,
+    } = req.body || {};
+    try {
+        const vals = [
+            Number(min_points ?? SCORE_MIN_POINTS),
+            Number(max_easy ?? SCORE_MAX_EASY),
+            Number(max_med ?? SCORE_MAX_MED),
+            Number(max_hard ?? SCORE_MAX_HARD),
+            Number(fast_ms ?? SCORE_FAST_MS),
+            Number(slow_ms ?? SCORE_SLOW_MS),
+        ];
+        await runQuery(
+            `INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,NOW())`,
+            vals
+        );
+        await auditLog(admin.id, 'SCORING_SETTINGS_UPDATE', `min=${vals[0]}, easy=${vals[1]}, med=${vals[2]}, hard=${vals[3]}, fastMs=${vals[4]}, slowMs=${vals[5]}`);
+        res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -668,6 +987,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok', timestamp: new Date()
 
 const PORT = process.env.PORT || 5000;
 initDatabase().then(() => {
+    setInterval(runScheduledResets, 60 * 1000);
     app.listen(PORT, '0.0.0.0', () => {
         console.log(`
 ╔════════════════════════════════════════════╗

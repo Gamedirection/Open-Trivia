@@ -25,20 +25,28 @@ Credits: Alex Sierputowski @ GameDirection.net
 ## ✅ Epic 2 — Leaderboard & Scoring
 *Focus: score model, queries, time windows, scheduler.*
 
-- [ ] Hide admin scores from leaderboard (from player view)  
-- [ ] Allow category specific scores  
-- [ ] Allow users to filter leaderboard by category  
-- [ ] Allow users to see scores for the Day, Month, Year  
-- [ ] Allow user to reset their score  
-- [ ] Allow timer tied to score (faster = higher score) with min/max bounds  
-- [ ] Allow admin to reset leaderboard on a schedule (daily/weekly/monthly/yearly)
+- [X] Hide admin scores from leaderboard (from player view)  
+- [X] Allow category specific scores  
+- [X] Allow users to filter leaderboard by category  
+- [X] Allow users to see scores for the Day, Month, Year  
+- [X] Allow user to reset their score  
+- [X] Allow timer tied to score (faster = higher score) with min/max bounds  
+- [X] Allow admin to reset leaderboard on a schedule (daily/weekly/monthly/yearly)
 
 **Notes**
-- [ ] Extend score schema: `userId`, `categoryId`, `score`, `createdAt`, `isAdmin`, `isAnonymous`  
-- [ ] Indexes for time windows (day/month/year)  
-- [ ] Scheduled resets via cron/Cloud Scheduler; idempotent jobs with logs  
-- [ ] Score reset retains audit trail (soft delete or archival table)  
+- [X] Extend score schema: `userId`, `categoryId`, `score`, `createdAt`, `isAdmin`, `isAnonymous`  
+- [X] Indexes for time windows (day/month/year)  
+- [X] Scheduled resets via cron/Cloud Scheduler; idempotent jobs with logs  
+- [X] Score reset retains audit trail (soft delete or archival table)  
 - [ ] Anti-cheat checks for timer-based scoring
+
+**Scoring Config (env)**
+- `SCORE_MIN_POINTS` (default `5`)
+- `SCORE_MAX_EASY` (default `10`)
+- `SCORE_MAX_MED` (default `15`)
+- `SCORE_MAX_HARD` (default `20`)
+- `SCORE_FAST_MS` (default `2000`)
+- `SCORE_SLOW_MS` (default `20000`)
 
 ---
 

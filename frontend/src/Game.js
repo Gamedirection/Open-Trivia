@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import RequestCardModal from './RequestCardModal';
 
@@ -26,6 +26,8 @@ export default function Game() {
     const [reportMessage, setReportMessage] = useState('');
     const [showRequestModal, setShowRequestModal] = useState(false);
     const [answered, setAnswered] = useState(null);
+    const [elapsedMs, setElapsedMs] = useState(0);
+    const startRef = useRef(null);
 
     const token = localStorage.getItem('token');
     const isLoggedIn = !!token;
@@ -55,6 +57,16 @@ export default function Game() {
         fetchQuestion();
     }, []);
 
+    useEffect(() => {
+        if (!question?.id) return;
+        startRef.current = Date.now();
+        setElapsedMs(0);
+        const tick = setInterval(() => {
+            if (startRef.current) setElapsedMs(Date.now() - startRef.current);
+        }, 100);
+        return () => clearInterval(tick);
+    }, [question?.id]);
+
     const handleAnswer = async (optionChar) => {
         if (!question || result || answered) return;
 
@@ -71,7 +83,8 @@ export default function Game() {
         });
 
         try {
-            const body = { questionId: question.id, selectedAnswer: optionChar };
+            const elapsed = startRef.current ? Date.now() - startRef.current : null;
+            const body = { questionId: question.id, selectedAnswer: optionChar, elapsedMs: elapsed };
 
             let headers = {};
             if (token) {
@@ -83,7 +96,11 @@ export default function Game() {
             }
 
             const res = await axios.post(`${API_URL}/game/submit`, body, { headers });
-            setResult({ isCorrect: res.data.isCorrect, correctAnswer: res.data.correctAnswer });
+            setResult({
+                isCorrect: res.data.isCorrect,
+                correctAnswer: res.data.correctAnswer,
+                pointsAwarded: res.data.pointsAwarded,
+            });
             setTimeout(() => fetchQuestion(), 3000);
         } catch (err) {
             console.error('Submit error:', err);
@@ -178,7 +195,7 @@ export default function Game() {
         <div className="card" style={{ position: 'relative' }}>
 
             {/* Category + Difficulty header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', gap: '10px', flexWrap: 'wrap' }}>
                 <span style={{
                     padding: '5px 12px', borderRadius: '20px',
                     backgroundColor: '#e2e6ea', fontSize: '14px', fontWeight: 'bold', color: '#333'
@@ -192,6 +209,13 @@ export default function Game() {
                     fontSize: '14px', fontWeight: 'bold'
                 }}>
                     {question?.complexity?.toUpperCase() || 'MEDIUM'}
+                </span>
+                <span style={{
+                    padding: '5px 12px', borderRadius: '20px',
+                    backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)',
+                    fontSize: '13px', fontWeight: 'bold', color: 'var(--text-color)'
+                }}>
+                    ⏱ {Math.min(99.9, elapsedMs / 1000).toFixed(1)}s
                 </span>
             </div>
 
@@ -255,7 +279,7 @@ export default function Game() {
                     border: result.isCorrect ? '1px solid #c3e6cb' : '1px solid #f5c6cb'
                 }}>
                     {result.isCorrect
-                        ? '🎉 Correct! +10 points! Next question in 3 seconds...'
+                        ? `🎉 Correct! +${result.pointsAwarded ?? 0} points! Next question in 3 seconds...`
                         : `❌ Wrong! The correct answer was ${result.correctAnswer}. Next question in 3 seconds...`}
                 </div>
             )}

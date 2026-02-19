@@ -184,6 +184,12 @@ export default function Admin() {
     // Audit log tab
     const [auditLog, setAuditLog]     = useState([]);
     const [auditLoading, setAuditLoading] = useState(false);
+    // Leaderboard schedule
+    const [lbSchedule, setLbSchedule] = useState([]);
+    const [lbLoading, setLbLoading] = useState(false);
+    // Scoring settings
+    const [scoring, setScoring] = useState(null);
+    const [scoringSaving, setScoringSaving] = useState(false);
 
     const flash = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 3500); }, []);
 
@@ -233,11 +239,29 @@ export default function Admin() {
         finally { setAuditLoading(false); }
     }, []);
 
+    const loadLeaderboardSchedule = useCallback(async () => {
+        setLbLoading(true);
+        try {
+            const r = await axios.get(`${API_URL}/admin/leaderboard/schedule`, authCfg());
+            setLbSchedule(r.data);
+        } catch { flash('❌ Failed to load leaderboard schedule'); }
+        finally { setLbLoading(false); }
+    }, []);
+
+    const loadScoringSettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/scoring-settings`, authCfg());
+            setScoring(r.data);
+        } catch { flash('❌ Failed to load scoring settings'); }
+    }, []);
+
     useEffect(() => { loadCategories(); }, []);
     useEffect(() => { if (tab === 'review') loadReview(); }, [tab]);
     useEffect(() => { if (tab === 'questions' && selCat) loadQuestions(selCat.id); }, [selCat, tab]);
     useEffect(() => { if (tab === 'users') loadUsers(); }, [tab]);
     useEffect(() => { if (tab === 'audit') loadAuditLog(); }, [tab]);
+    useEffect(() => { if (tab === 'leaderboard') loadLeaderboardSchedule(); }, [tab]);
+    useEffect(() => { if (tab === 'leaderboard') loadScoringSettings(); }, [tab]);
 
     // ── Category actions ───────────────────────────────────────────────────────
     const addCategory = async () => {
@@ -339,6 +363,40 @@ export default function Admin() {
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Role change failed')); }
     };
 
+    // ── Leaderboard actions ───────────────────────────────────────────────────
+    const setSchedule = async (period, enabled) => {
+        try {
+            await axios.post(`${API_URL}/admin/leaderboard/schedule`, { period, enabled }, authCfg());
+            flash(`✅ ${period} schedule ${enabled ? 'enabled' : 'disabled'}`);
+            loadLeaderboardSchedule();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Schedule update failed')); }
+    };
+
+    const resetLeaderboardNow = async () => {
+        if (!window.confirm('Reset the global leaderboard now? This affects all categories.')) return;
+        try {
+            await axios.post(`${API_URL}/admin/leaderboard/reset`, {}, authCfg());
+            flash('✅ Leaderboard reset');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Reset failed')); }
+    };
+
+    const saveScoringSettings = async () => {
+        if (!scoring) return;
+        setScoringSaving(true);
+        try {
+            await axios.post(`${API_URL}/admin/scoring-settings`, {
+                min_points: Number(scoring.min_points),
+                max_easy: Number(scoring.max_easy),
+                max_med: Number(scoring.max_med),
+                max_hard: Number(scoring.max_hard),
+                fast_ms: Number(scoring.fast_ms),
+                slow_ms: Number(scoring.slow_ms),
+            }, authCfg());
+            flash('✅ Scoring settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setScoringSaving(false); }
+    };
+
     // ── Styles ─────────────────────────────────────────────────────────────────
     const tabStyle = (t) => ({
         padding: '9px 18px', borderRadius: '6px', border: 'none', cursor: 'pointer',
@@ -387,6 +445,7 @@ export default function Admin() {
                         </span>
                     )}
                 </button>
+                <button style={tabStyle('leaderboard')} onClick={() => setTab('leaderboard')}>🏆 Leaderboard</button>
                 <button style={tabStyle('audit')}      onClick={() => setTab('audit')}>📜 Audit Log</button>
             </div>
 
@@ -795,6 +854,129 @@ export default function Admin() {
                             ))}
                         </div>
                     )}
+                </div>
+            )}
+
+            {/* ── LEADERBOARD ───────────────────────────────────────────────── */}    
+            {tab === 'leaderboard' && (
+                <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
+                        <h3 style={{ margin: 0 }}>🏆 Leaderboard Resets</h3>
+                        <button className="btn" onClick={resetLeaderboardNow} style={{ fontSize: '12px', padding: '6px 12px', backgroundColor: '#dc3545', color: 'white' }}>
+                            Reset Now
+                        </button>
+                    </div>
+
+                    <div style={{ ...cardStyle }}>
+                        <h4 style={{ marginTop: 0 }}>Scheduled Resets</h4>
+                        {lbLoading ? (
+                            <p style={{ color: '#888' }}>Loading schedule...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '8px' }}>
+                                {['daily', 'weekly', 'monthly', 'yearly'].map(period => {
+                                    const row = lbSchedule.find(r => r.period === period);
+                                    const enabled = row?.enabled;
+                                    return (
+                                        <div key={period} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <div>
+                                                <strong style={{ textTransform: 'capitalize' }}>{period}</strong>
+                                                <div style={{ fontSize: '12px', color: '#888' }}>
+                                                    Next run: {row?.next_run ? new Date(row.next_run).toLocaleString() : '—'}
+                                                </div>
+                                            </div>
+                                            <button
+                                                className="btn"
+                                                onClick={() => setSchedule(period, !enabled)}
+                                                style={{ fontSize: '12px', padding: '6px 12px', backgroundColor: enabled ? '#6c757d' : '#28a745', color: 'white' }}
+                                            >
+                                                {enabled ? 'Disable' : 'Enable'}
+                                            </button>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ ...cardStyle, marginTop: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Scoring Settings (Defaults)</h4>
+                        {!scoring ? (
+                            <p style={{ color: '#888' }}>Loading settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Min Points</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.min_points}
+                                            onChange={e => setScoring({ ...scoring, min_points: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Easy Max</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.max_easy}
+                                            onChange={e => setScoring({ ...scoring, max_easy: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Medium Max</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.max_med}
+                                            onChange={e => setScoring({ ...scoring, max_med: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Hard Max</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.max_hard}
+                                            onChange={e => setScoring({ ...scoring, max_hard: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Fast Time (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.fast_ms}
+                                            onChange={e => setScoring({ ...scoring, fast_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Slow Time (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.slow_ms}
+                                            onChange={e => setScoring({ ...scoring, slow_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button className="btn btn-primary" onClick={saveScoringSettings} disabled={scoringSaving}>
+                                        {scoringSaving ? 'Saving...' : 'Save Scoring Settings'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadScoringSettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload Defaults
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
             )}
 
