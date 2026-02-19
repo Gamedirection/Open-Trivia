@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "open-trivia.fullname" . }}-config
+data:
+  REACT_APP_API_URL: {{ .Values.frontend.env.REACT_APP_API_URL | quote }}
+  PG_HOST: {{ .Values.backend.env.PG_HOST | quote }}
+  PG_PORT: {{ .Values.backend.env.PG_PORT | quote }}
+  PG_USER: {{ .Values.backend.env.PG_USER | quote }}
+  PG_PASSWORD: {{ .Values.backend.env.PG_PASSWORD | quote }}
+  PG_DB: {{ .Values.backend.env.PG_DB | quote }}
+  APP_URL: {{ .Values.backend.env.APP_URL | quote }}
+  SMTP_HOST: {{ .Values.backend.env.SMTP_HOST | quote }}
+  SMTP_PORT: {{ .Values.backend.env.SMTP_PORT | quote }}
+  SMTP_SECURE: {{ .Values.backend.env.SMTP_SECURE | quote }}
+  SMTP_USER: {{ .Values.backend.env.SMTP_USER | quote }}
+  SMTP_PASS: {{ .Values.backend.env.SMTP_PASS | quote }}
+  SMTP_FROM: {{ .Values.backend.env.SMTP_FROM | quote }}

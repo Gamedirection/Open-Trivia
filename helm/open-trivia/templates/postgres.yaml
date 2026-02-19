@@ -1,0 +1,63 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "open-trivia.fullname" . }}-postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "open-trivia.fullname" . }}-postgres
+  template:
+    metadata:
+      labels:
+        app: {{ include "open-trivia.fullname" . }}-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: {{ .Values.postgres.image }}
+          ports:
+            - containerPort: {{ .Values.postgres.service.port }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.backend.env.PG_USER | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.backend.env.PG_PASSWORD | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.backend.env.PG_DB | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: data
+{{- if .Values.postgres.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "open-trivia.fullname" . }}-postgres
+{{- else }}
+          emptyDir: {}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "open-trivia.fullname" . }}-postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ include "open-trivia.fullname" . }}-postgres
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.service.port }}
+{{- if .Values.postgres.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "open-trivia.fullname" . }}-postgres
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.postgres.persistence.size }}
+{{- end }}
+{{- end }}

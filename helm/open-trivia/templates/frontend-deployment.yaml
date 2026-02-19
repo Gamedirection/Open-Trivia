@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "open-trivia.fullname" . }}-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "open-trivia.fullname" . }}-frontend
+  template:
+    metadata:
+      labels:
+        app: {{ include "open-trivia.fullname" . }}-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: {{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag }}
+          ports:
+            - containerPort: {{ .Values.frontend.service.port }}
+          env:
+            - name: REACT_APP_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "open-trivia.fullname" . }}-config
+                  key: REACT_APP_API_URL

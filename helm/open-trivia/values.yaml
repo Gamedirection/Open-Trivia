@@ -1,0 +1,47 @@
+image:
+  frontend:
+    repository: ghcr.io/gamedirection/open-trivia-frontend
+    tag: "v0.2.0"
+  backend:
+    repository: ghcr.io/gamedirection/open-trivia-backend
+    tag: "v0.2.0"
+
+frontend:
+  service:
+    type: ClusterIP
+    port: 3000
+  env:
+    REACT_APP_API_URL: /api
+
+backend:
+  service:
+    type: ClusterIP
+    port: 5000
+  env:
+    PG_HOST: open-trivia-postgres
+    PG_PORT: "5432"
+    PG_USER: trivia_user
+    PG_PASSWORD: trivia_pass
+    PG_DB: trivia_db
+    JWT_SECRET: change-me
+    APP_URL: http://localhost:3000
+    SMTP_HOST: ""
+    SMTP_PORT: "587"
+    SMTP_SECURE: "false"
+    SMTP_USER: ""
+    SMTP_PASS: ""
+    SMTP_FROM: ""
+
+postgres:
+  enabled: true
+  image: postgres:15-alpine
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 5Gi
+
+ingress:
+  enabled: false
+  className: ""
+  host: ""

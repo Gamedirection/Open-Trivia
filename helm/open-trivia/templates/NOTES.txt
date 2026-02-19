@@ -1,0 +1,11 @@
+Open-Trivia Helm chart installed.
+
+Frontend service:
+  {{ include "open-trivia.fullname" . }}-frontend
+
+Backend service:
+  {{ include "open-trivia.fullname" . }}-backend
+
+If ingress is disabled, access via NodePort/port-forward:
+  kubectl port-forward svc/{{ include "open-trivia.fullname" . }}-frontend 8080:{{ .Values.frontend.service.port }}
+
