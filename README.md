@@ -8,7 +8,7 @@ Credits: Alex Sierputowski @ GameDirection.net
 *Focus: auth service, roles, admin console.*
 
 - [X] Allow users to reset passwords  
-    - [ ] Need to connect to email server to send token to users. (Dev environments only atm)
+    - [X] Need to connect to email server to send token to users. (Dev environments only atm)
 - [X] Allows admin to reset user password  
 - [X] Allow admin to see all users  
 - [X] You should only be able to report/suggest when signed in as a User/Admin  
@@ -357,3 +357,4 @@ For open source projects, say how it is licensed.
 
 ## Project status
 If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+
