@@ -70,7 +70,7 @@ Credits: Alex Sierputowski @ GameDirection.net
 ## ✅ Epic 4 — User-facing Analytics & Personalization
 *Focus: personal dashboard, aggregates.*
 
-- [ ] Allow users to see personal stats and data
+- [X] Allow users to see personal stats and data
 
 **Notes**
 - [ ] Display totals, per-category breakdown, and time-window stats  

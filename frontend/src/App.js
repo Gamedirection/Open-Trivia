@@ -4,7 +4,9 @@ import Game from './Game';
 import Admin from './Admin';
 import Leaderboard from './Leaderboard';
 import ResetPasswordPage from './ResetPasswordPage';
+import Dashboard from './Dashboard';
 import { ThemeProvider, useTheme } from './ThemeContext';
+import { gravatarUrl } from './utils/gravatar';
 import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -70,6 +72,15 @@ const AppHeader = ({ user, onLogout }) => {
                     <LoginModal />
                 ) : (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        {storedUser?.email && (
+                            <img
+                                src={gravatarUrl(storedUser.email, 48)}
+                                alt={storedUser.email}
+                                width={28}
+                                height={28}
+                                style={{ borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)' }}
+                            />
+                        )}
                         <span style={{ fontSize: '0.9rem' }}>
                             Welcome, <strong>{userEmail.split('@')[0]}</strong>
                         </span>
@@ -291,6 +302,9 @@ function App() {
 
                             <nav style={{ marginBottom: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', display: 'flex', gap: '30px' }}>
                                 <Link to="/" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Play Game</Link>
+                                {user && (
+                                    <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>My Stats</Link>
+                                )}
                                 <Link to="/leaderboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Leaderboard</Link>
                                 {user && user.role === 'admin' && (
                                     <Link to="/admin" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Admin Panel</Link>
@@ -299,6 +313,7 @@ function App() {
 
                             <Routes>
                                 <Route path="/" element={<Game />} />
+                                <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/" replace />} />
                                 <Route path="/leaderboard" element={<Leaderboard />} />
                                 <Route path="/admin" element={user?.role === 'admin' ? <Admin /> : <Navigate to="/" replace />} />
                             </Routes>

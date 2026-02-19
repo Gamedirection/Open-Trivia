@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { gravatarUrl } from './utils/gravatar';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -161,14 +162,18 @@ export default function Leaderboard() {
                             <td style={{ padding: '10px', fontWeight: 'bold' }}>{index + 1}</td>
                             <td style={{ padding: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                    <div style={{
-                                        width: '35px', height: '35px', borderRadius: '50%', marginRight: '15px',
-                                        border: '2px solid var(--header-bg)', backgroundColor: 'var(--header-bg)',
-                                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                        color: 'white', fontWeight: 'bold', fontSize: '14px', flexShrink: 0
-                                    }}>
-                                        {user.email[0].toUpperCase()}
-                                    </div>
+                                    <img
+                                        src={gravatarUrl(user.email, 70)}
+                                        alt={user.email}
+                                        width={35}
+                                        height={35}
+                                        style={{
+                                            borderRadius: '50%',
+                                            marginRight: '15px',
+                                            border: '2px solid var(--header-bg)',
+                                            flexShrink: 0
+                                        }}
+                                    />
                                     <div>
                                         <div style={{ fontWeight: 'bold' }}>{user.email.split('@')[0]}</div>
                                         <div style={{ fontSize: '0.8rem', opacity: '0.7' }}>{user.email}</div>

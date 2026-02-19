@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { gravatarUrl } from './utils/gravatar';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -769,7 +770,16 @@ export default function Admin() {
                                         return (
                                             <tr key={u.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                                 <td style={{ padding: '10px 8px' }}>
-                                                    <div style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{u.email.split('@')[0]}</div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <img
+                                                            src={gravatarUrl(u.email, 48)}
+                                                            alt={u.email}
+                                                            width={24}
+                                                            height={24}
+                                                            style={{ borderRadius: '50%', border: '1px solid var(--border-color)' }}
+                                                        />
+                                                        <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{u.email.split('@')[0]}</span>
+                                                    </div>
                                                     <div style={{ fontSize: '11px', color: '#888' }}>{u.email}</div>
                                                 </td>
                                                 <td style={{ padding: '10px 8px' }}>

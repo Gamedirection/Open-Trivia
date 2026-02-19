@@ -835,6 +835,100 @@ app.post('/me/reset-score', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── USER: STATS DASHBOARD ─────────────────────────────────────────────────────
+app.get('/me/stats', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    const { timeframe } = req.query;
+    const now = new Date();
+    let start = new Date(0);
+    if (timeframe === 'day') {
+        start = new Date(now); start.setHours(0, 0, 0, 0);
+    } else if (timeframe === 'month') {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (timeframe === 'year') {
+        start = new Date(now.getFullYear(), 0, 1);
+    }
+    try {
+        const base = await pool.query(`
+            WITH global_reset AS (
+                SELECT MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='global'
+            ),
+            user_reset AS (
+                SELECT MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='user' AND user_id=$1
+            ),
+            filtered AS (
+                SELECT *
+                FROM game_sessions
+                WHERE user_id=$1
+                  AND created_at >= GREATEST(
+                        COALESCE((SELECT ts FROM global_reset), '1970-01-01'),
+                        COALESCE((SELECT ts FROM user_reset), '1970-01-01'),
+                        $2::timestamp
+                  )
+            )
+            SELECT
+                COALESCE(SUM(points), 0)::int AS total_points,
+                COUNT(*)::int AS total_answered,
+                COUNT(*) FILTER (WHERE is_correct = TRUE)::int AS correct_answered
+            FROM filtered
+        `, [u.id, start]);
+
+        const byCat = await pool.query(`
+            WITH global_reset AS (
+                SELECT MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='global'
+            ),
+            user_reset AS (
+                SELECT MAX(reset_at) AS ts
+                FROM score_resets
+                WHERE scope='user' AND user_id=$1
+            ),
+            filtered AS (
+                SELECT *
+                FROM game_sessions
+                WHERE user_id=$1
+                  AND created_at >= GREATEST(
+                        COALESCE((SELECT ts FROM global_reset), '1970-01-01'),
+                        COALESCE((SELECT ts FROM user_reset), '1970-01-01'),
+                        $2::timestamp
+                  )
+            )
+            SELECT c.id AS category_id, c.name AS category_name,
+                   COALESCE(SUM(f.points), 0)::int AS points,
+                   COUNT(f.id)::int AS total_answered,
+                   COUNT(f.id) FILTER (WHERE f.is_correct = TRUE)::int AS correct_answered
+            FROM filtered f
+            JOIN categories c ON c.id = f.category_id
+            GROUP BY c.id
+            ORDER BY points DESC
+        `, [u.id, start]);
+
+        const recent = await pool.query(`
+            SELECT gs.id, gs.is_correct, gs.points, gs.created_at,
+                   q.text AS question_text, q.complexity,
+                   c.name AS category_name
+            FROM game_sessions gs
+            JOIN questions q ON q.id = gs.question_id
+            JOIN categories c ON c.id = gs.category_id
+            WHERE gs.user_id=$1
+            ORDER BY gs.created_at DESC
+            LIMIT 10
+        `, [u.id]);
+
+        res.json({
+            totals: base.rows[0],
+            byCategory: byCat.rows,
+            recent: recent.rows
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── PENDING QUESTIONS — requires authentication ────────────────────────────────
 app.post('/pending-questions', async (req, res) => {
     const u = await requireAuth(req, res);
