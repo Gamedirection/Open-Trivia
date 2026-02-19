@@ -2,16 +2,16 @@ services:
   db:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_USER=trivia_user
-      - POSTGRES_PASSWORD=trivia_pass
-      - POSTGRES_DB=trivia_db
+      - POSTGRES_USER=${PG_USER}
+      - POSTGRES_PASSWORD=${PG_PASS}
+      - POSTGRES_DB=${PG_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data/
 
   frontend:
-    build: ./frontend
+    image: ghcr.io/gamedirection/open-trivia-frontend:latest
     ports:
-      - "3009:3000"
+      - "3000:3000"
     depends_on:
       - backend
     environment:
@@ -20,25 +20,26 @@ services:
 #      - REACT_APP_API_URL=http://backend:5000/api
 
   backend:
-    build: ./backend
+    image: ghcr.io/gamedirection/open-trivia-backend:latest
+    #build: ./backend
     ports:
-      - "5000:5000"
+      - "3001:5000"
     #secrets: # DockerSwarm
     #  - smtp_host
     #  - smtp_user
     #  - smtp_pass
     environment:
-      - PG_HOST=db
-      - PG_PORT=5432
-      - PG_USER=trivia_user
-      - PG_PASSWORD=trivia_pass
-      - PG_DB=trivia_db
-      - JWT_SECRET=LW3u9ojVDxZUYku7Kks6ZUS3PMw3A6K3
+      - PG_HOST=${PG_HOST}
+      - PG_PORT=${PG_PORT}
+      - PG_USER=${PG_USER}
+      - PG_PASSWORD=${PG_PASS}
+      - PG_DB=${PG_DB}
+      - JWT_SECRET=${JWT_SECRET}
 
       # ── Email / SMTP ──────────────────────────────────────────────────────────
       # The public URL of your frontend (used to build the reset link in emails).
       # Change this to your domain in production, e.g. https://trivia.example.com
-      - APP_URL=http://localhost:3009
+      - APP_URL=${APP_URL}
 
       # Leave SMTP_HOST blank (or remove these lines entirely) to disable outbound
       # email. The backend will fall back to logging reset tokens to stdout, and
@@ -51,9 +52,8 @@ services:
       - SMTP_USER=${SMTP_USER}
       - SMTP_PASS=${SMTP_PASS}
       # Displayed in the From: header. Defaults to noreply@<SMTP_HOST> if blank.
-      - SMTP_FROM= # noreply<@SMTP_HOST>
-
-      # ── Common provider examples (uncomment and fill in one block) ────────────
+      - SMTP_FROM=${SMTP_USER} # noreply<@SMTP_HOST>
+     # ── Common provider examples (uncomment and fill in one block) ────────────
 
       # Gmail (use an App Password, not your account password):
       # - SMTP_HOST=smtp.gmail.com
@@ -100,17 +100,19 @@ services:
     depends_on:
       - db
 
-  # swaggerui:
-  #   image: swaggerapi/swagger-ui:latest
-  #   ports:
-  #     - "5010:8080"
-  #   environment:
-  #     - SWAGGER_JSON=/spec/openapi.json
-  #   volumes:
-  #     - ./docs/openapi.json:/spec/openapi.json:ro
+  #swaggerui:
+  #  image: swaggerapi/swagger-ui:latest
+  #  ports:
+  #    - "3002:8080"
+  #  environment:
+  #    - SWAGGER_JSON=/spec/openapi.json
+  #  volumes:
+  #    - ./docs/openapi.json:/spec/openapi.json:ro
+
 
 volumes:
   postgres_data:
+
 
 # DockerSwarm
 #secrets:
