@@ -1,8 +1,8 @@
 # Open-Trivia
 
-Created by gamedirection.net © 2026  
-Discord: join.gamedirection.net  
-Credits: Alex Sierputowski @ GameDirection.net
+Created by [gamedirection.net](https://gamedirection.net) © 2026  
+Discord: [join.gamedirection.net](https://join.gamedirection.net)  
+Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 
 ## Overview
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
@@ -67,6 +67,9 @@ Spec file:
 docs/openapi.json
 ```
 
+## Changelog
+See `docs/CHANGELOG.md`.
+
 ## Helm (K8s)
 Chart location:
 ```text
@@ -123,16 +126,12 @@ Note: ensure the Swarm section in `docker-compose.yml` secrets is enabled.
 - [ ] Confirm service worker cache invalidation on release
 - [ ] Monitor logs and alerts (error rates, latency, DB size)
 
-## Changelog
-See `docs/CHANGELOG.md`.
-
 ## License
-```text
-LICENSE
-```
+See `LICENSE`.
 
 ## Links
-```text
-https://github.com/Gamedirection/Open-Trivia
-https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE
-```
+- Repo: https://github.com/Gamedirection/Open-Trivia
+- License: https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE
+- Changelog: docs/CHANGELOG.md
+- OpenAPI: docs/openapi.json
+- Helm chart: helm/open-trivia
