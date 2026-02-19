@@ -135,4 +135,4 @@ See `LICENSE`.
 - Changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md)
 - OpenAPI: [docs/openapi.json](docs/openapi.json)
 - Helm chart: [helm/open-trivia](helm/open-trivia)
-- Maintenance Checklist: [docs/CHANGELOG.md## Maintenance Checklist (How to)](docs/CHANGELOG.md)
+- Maintenance Checklist: [docs/Maintenance Checklist (How to)](https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md#maintenance-checklist-how-to)
