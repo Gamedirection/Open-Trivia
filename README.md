@@ -132,6 +132,7 @@ See `LICENSE`.
 ## Links
 - Repo: https://github.com/Gamedirection/Open-Trivia
 - License: https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE
-- Changelog: docs/CHANGELOG.md
-- OpenAPI: docs/openapi.json
-- Helm chart: helm/open-trivia
+- Changelog: [docs/CHANGELOG.md](docs/CHANGELOG.md)
+- OpenAPI: [docs/openapi.json](docs/openapi.json)
+- Helm chart: [helm/open-trivia](helm/open-trivia)
+- Maintenance Checklist: [docs/CHANGELOG.md## Maintenance Checklist (How to)](docs/CHANGELOG.md)
