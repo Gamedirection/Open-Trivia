@@ -1,0 +1,3 @@
+[submodule "Open-Trivia-Questions"]
+	path = docs/Open-Trivia-Questions
+	url = https://github.com/Gamedirection/Open-Trivia-Questions.git
