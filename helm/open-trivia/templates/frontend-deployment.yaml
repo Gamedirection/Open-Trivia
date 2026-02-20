@@ -20,6 +20,8 @@ spec:
           env:
             - name: REACT_APP_VERSION
               value: {{ .Values.image.frontend.tag | quote }}
+            - name: APP_IMAGE_TAG
+              value: {{ .Values.image.frontend.tag | quote }}
             - name: REACT_APP_API_URL
               valueFrom:
                 configMapKeyRef:
