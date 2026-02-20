@@ -18,8 +18,30 @@ spec:
           ports:
             - containerPort: {{ .Values.frontend.service.port }}
           env:
+            - name: REACT_APP_VERSION
+              value: {{ .Values.image.frontend.tag | quote }}
             - name: REACT_APP_API_URL
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "open-trivia.fullname" . }}-config
                   key: REACT_APP_API_URL
+            {{- if or .Values.branding.logo.url .Values.branding.logo.configMap }}
+            - name: REACT_APP_BRAND_LOGO_URL
+              value: {{ default "/brand/logo.png" .Values.branding.logo.url | quote }}
+            {{- end }}
+          {{- if .Values.branding.logo.configMap }}
+          volumeMounts:
+            - name: branding-logo
+              mountPath: {{ .Values.branding.logo.mountPath | quote }}
+              subPath: {{ .Values.branding.logo.key | quote }}
+              readOnly: true
+          {{- end }}
+      {{- if .Values.branding.logo.configMap }}
+      volumes:
+        - name: branding-logo
+          configMap:
+            name: {{ .Values.branding.logo.configMap | quote }}
+            items:
+              - key: {{ .Values.branding.logo.key | quote }}
+                path: {{ .Values.branding.logo.key | quote }}
+      {{- end }}

@@ -1,5 +1,15 @@
 # Changelog / Roadmap
 
+## v0.3.2
+- Added optional branded logo support via Docker Compose and Helm (fallback to default icon).
+- Frontend now reads version from the image tag when provided.
+
+## v0.3.1
+- Moved the collections/questions repo into a submodule at `docs/Open-Trivia-Questions`.
+- Updated template README location in the docs to point at the submodule.
+- Added the category pack template zip to the collections repo.
+- Category pack import now accepts GitHub release asset URLs in addition to repo zips.
+
 ## v0.3.0
 - Privacy controls: display names, hide email toggle, admin global/default email visibility.
 - Leaderboard privacy: hide emails for logged-out users, optional name censoring, optional anonymous users, optional Gravatar icons (auto-hidden when censoring).

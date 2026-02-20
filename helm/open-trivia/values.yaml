@@ -1,10 +1,10 @@
 image:
   frontend:
     repository: ghcr.io/gamedirection/open-trivia-frontend
-    tag: "v0.2.1"
+    tag: "v0.3.2"
   backend:
     repository: ghcr.io/gamedirection/open-trivia-backend
-    tag: "v0.2.1"
+    tag: "v0.3.2"
 
 frontend:
   service:
@@ -12,6 +12,13 @@ frontend:
     port: 3000
   env:
     REACT_APP_API_URL: /api
+
+branding:
+  logo:
+    url: ""
+    configMap: ""
+    key: "logo.png"
+    mountPath: "/app/public/brand/logo.png"
 
 backend:
   service:

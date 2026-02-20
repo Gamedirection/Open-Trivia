@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import pkg from '../package.json';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Game from './Game';
 import Admin from './Admin';
@@ -8,6 +7,7 @@ import ResetPasswordPage from './ResetPasswordPage';
 import Dashboard from './Dashboard';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import { gravatarUrl } from './utils/gravatar';
+import { BRAND_LOGO_URL, DISPLAY_VERSION } from './branding';
 import axios from 'axios';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
@@ -23,6 +23,21 @@ const getDisplayName = (u) => {
         return parts[0] || u.email;
     }
     return 'Guest';
+};
+
+const BrandMark = ({ size = 24 }) => {
+    if (BRAND_LOGO_URL) {
+        return (
+            <img
+                src={BRAND_LOGO_URL}
+                alt="Open-Trivia logo"
+                width={size}
+                height={size}
+                style={{ display: 'inline-block', objectFit: 'contain' }}
+            />
+        );
+    }
+    return <span style={{ fontSize: `${size}px`, lineHeight: 1 }}>🏆</span>;
 };
 
 const AppHeader = ({ user, onLogout }) => {
@@ -55,8 +70,9 @@ const AppHeader = ({ user, onLogout }) => {
             boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
         }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
-                <h1 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center' }}>
-                    🏆 Open-Trivia
+                <h1 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <BrandMark size={24} />
+                    <span>Open-Trivia</span>
                 </h1>
                 {token && storedUser && (
                     <div style={{ marginLeft: '20px' }}>
@@ -373,7 +389,7 @@ function App() {
                                     License: <a href="https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE" style={{ color: '#007bff', textDecoration: 'none' }}>LICENSE</a>
                                 </p>
                                 <p style={{ margin: '6px 0 0' }}>
-                                    Version: <a href="https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md" style={{ color: '#007bff', textDecoration: 'none' }}>v{pkg.version}</a>
+                                    Version: <a href="https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md" style={{ color: '#007bff', textDecoration: 'none' }}>{DISPLAY_VERSION}</a>
                                 </p>
 
                                 <details style={{ marginTop: '12px' }}>

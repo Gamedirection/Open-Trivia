@@ -1321,11 +1321,11 @@ export default function Admin() {
                                 <input
                                     value={githubRepoUrl}
                                     onChange={e => setGithubRepoUrl(e.target.value)}
-                                    placeholder="GitHub repo URL (or zip URL)"
+                                    placeholder="GitHub repo URL, release asset, or zip URL"
                                     style={{ flex: 1, minWidth: '220px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                 />
                                 <button className="btn" onClick={importFromGithub} disabled={importingCats || !githubRepoUrl.trim()}>
-                                    Import from GitHub
+                                    Import from GitHub/URL
                                 </button>
                             </div>
                         </div>

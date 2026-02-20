@@ -17,7 +17,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Profile & privacy: display name edits, email visibility toggle, optional Gravatar icons.
 - Question images by URL or admin uploads (png/jpg/jpeg/svg/webp).
 - User suggestions can include image URLs.
-- Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip or GitHub.
+- Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip, GitHub, or a GitHub release asset URL.
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
 - Helm chart for Kubernetes deployments.
@@ -62,7 +62,7 @@ DIFF_DOWN_THRESHOLD=0.8
 - Privacy and rate-limit settings (reports/suggestions).
 - Image size limits for question images.
 - Admin image uploads for questions.
-- Category pack export/import (zip or GitHub) + template download.
+- Category pack export/import (zip, GitHub, or release asset URL) + template download.
 
 ## Shared Collections
 Community packs can be browsed at `questions.trivia.gamedirection.net`.  
@@ -76,9 +76,24 @@ Security note: only import zips from sources you trust.
 - CSV `image_url` can reference `images/filename.ext` or an external URL.
 
 ## Collections Repo Template
-See `docs/Open-Trivia-Questions-README.md` for the template README content used by the collections repo.
+The questions/collections repo lives as a submodule at `docs/Open-Trivia-Questions`.
+The template README content used by the collections repo is `docs/Open-Trivia-Questions/README.md`.
 - Data Management: backups, export/import, restore a single user.
 - Questions: CSV export/import and template download.
+
+## Contributing Question Packs
+This repo includes the collections repo as a submodule at `docs/Open-Trivia-Questions`.
+
+To contribute questions:
+1. Enter the submodule: `cd docs/Open-Trivia-Questions`
+2. Create/update category packs using the template zip (`template-category.zip`) and follow the README in that repo.
+3. Commit and push in the submodule repo.
+4. Return to this repo, commit the updated submodule pointer, and push.
+
+If you are cloning fresh, make sure to init/update submodules:
+```bash
+git submodule update --init --recursive
+```
 
 ## API Documentation
 OpenAPI spec is served at:
@@ -105,10 +120,19 @@ helm install open-trivia helm/open-trivia
 Override values:
 ```bash
 helm install open-trivia helm/open-trivia \
-  --set image.frontend.tag=v0.2.1 \
-  --set image.backend.tag=v0.2.1 \
+  --set image.frontend.tag=v0.3.2 \
+  --set image.backend.tag=v0.3.2 \
   --set backend.env.JWT_SECRET=change-me
 ```
+
+## Branding (Logo)
+Docker Compose:
+1. Place your logo at `branding/logo.png`.
+2. Uncomment `REACT_APP_BRAND_LOGO_URL` and the `volumes` block under `frontend` in `docker-compose.yml`.
+
+Helm:
+1. Create a config map from your logo file: `kubectl create configmap open-trivia-logo --from-file=logo.png`.
+2. Install/upgrade with `--set branding.logo.configMap=open-trivia-logo --set branding.logo.url=/brand/logo.png`.
 
 ## Docker Swarm
 Create secrets (recommended):
@@ -159,3 +183,4 @@ See `LICENSE`.
 - OpenAPI: [docs/openapi.json](docs/openapi.json)
 - Helm chart: [helm/open-trivia](helm/open-trivia)
 - Maintenance Checklist: [docs/Maintenance Checklist (How to)](https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md#maintenance-checklist-how-to)
+- Questions submodule: [docs/Open-Trivia-Questions](docs/Open-Trivia-Questions)

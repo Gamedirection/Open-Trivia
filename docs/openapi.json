@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Open-Trivia API",
-    "version": "0.3.0",
+    "version": "0.3.2",
     "description": "Open-Trivia backend API"
   },
   "servers": [
@@ -440,7 +440,7 @@
     },
     "/admin/categories/import-github": {
       "post": {
-        "summary": "Import category pack from GitHub (admin)",
+        "summary": "Import category pack from GitHub or zip URL (admin)",
         "security": [{ "bearerAuth": [] }],
         "requestBody": {
           "required": true,
@@ -449,7 +449,7 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "repoUrl": { "type": "string" }
+                  "repoUrl": { "type": "string", "description": "GitHub repo URL, GitHub release asset URL, or direct .zip URL" }
                 },
                 "required": ["repoUrl"]
               }

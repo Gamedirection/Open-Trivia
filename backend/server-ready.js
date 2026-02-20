@@ -2085,14 +2085,15 @@ app.post('/admin/categories/import-github', async (req, res) => {
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' });
     try {
         let zipUrl = repoUrl;
-        if (/github\.com\/[^/]+\/[^/]+/i.test(repoUrl)) {
+        const isZipUrl = /\.zip($|\?)/i.test(repoUrl) || /releases\/download\//i.test(repoUrl);
+        if (!isZipUrl && /github\.com\/[^/]+\/[^/]+/i.test(repoUrl)) {
             const parts = repoUrl.replace(/\/$/, '').split('/');
             const owner = parts[parts.length - 2];
             const repo = parts[parts.length - 1].replace(/\.git$/, '');
             zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/main.zip`;
         }
         const r = await fetch(zipUrl);
-        if (!r.ok) return res.status(400).json({ error: 'Failed to fetch repo zip' });
+        if (!r.ok) return res.status(400).json({ error: `Failed to fetch zip (${r.status})` });
         const buf = Buffer.from(await r.arrayBuffer());
         const inserted = await importCategoryZipBuffer(buf);
         res.json({ success: true, inserted });

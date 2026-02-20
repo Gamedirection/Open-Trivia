@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { useTheme } from './ThemeContext';
+import { BRAND_LOGO_URL } from './branding';
 
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 
@@ -151,7 +152,17 @@ export default function ResetPasswordPage() {
             {/* Logo / back link */}
             <div style={{ marginBottom: '28px', textAlign: 'center' }}>
                 <Link to="/" style={{ textDecoration: 'none' }}>
-                    <span style={{ fontSize: '2rem' }}>🏆</span>
+                    {BRAND_LOGO_URL ? (
+                        <img
+                            src={BRAND_LOGO_URL}
+                            alt="Open-Trivia logo"
+                            width={48}
+                            height={48}
+                            style={{ display: 'inline-block', objectFit: 'contain' }}
+                        />
+                    ) : (
+                        <span style={{ fontSize: '2rem' }}>🏆</span>
+                    )}
                     <span style={{
                         display: 'block', fontSize: '1.4rem', fontWeight: '800',
                         color: 'var(--text-color, #333)', marginTop: '4px',
