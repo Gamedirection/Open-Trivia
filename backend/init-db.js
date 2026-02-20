@@ -59,6 +59,7 @@ async function initDB() {
                 option_d TEXT NOT NULL,
                 correct_answer CHAR(1) NOT NULL,
                 complexity VARCHAR(20) NOT NULL,
+                image_url TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status VARCHAR(20) DEFAULT 'pending'
             );

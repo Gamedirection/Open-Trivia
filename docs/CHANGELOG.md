@@ -7,6 +7,12 @@
 - Rate limits for guest/user reports and question suggestions.
 - Blocked users excluded from leaderboard.
 - Question images via URL with admin-configurable size limits (png/jpg/jpeg/svg/webp).
+- Admin image uploads for questions with server storage.
+- User suggestions can include image URLs.
+- Report reasons with optional details (general/inappropriate/incorrect).
+- Category packs: export selected categories as zip (CSV + images) and import from zip or GitHub.
+- Category pack template download (zip).
+- Collections repo template and admin UI link for shared packs.
 - Footer now includes version link to changelog.
 
 ## v0.2.0

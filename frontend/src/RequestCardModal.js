@@ -8,7 +8,8 @@ export default function RequestCardModal({ onClose }) {
     const [form, setForm] = useState({
         categoryName: '', text: '',
         optionA: '', optionB: '', optionC: '', optionD: '',
-        correctAnswer: 'A', complexity: 'medium'
+        correctAnswer: 'A', complexity: 'medium',
+        imageUrl: ''
     });
     const [categories, setCategories] = useState([]);
     const [categorySearch, setCategorySearch] = useState('');
@@ -38,7 +39,8 @@ export default function RequestCardModal({ onClose }) {
                     text: form.text.trim(),
                     options: { a: form.optionA, b: form.optionB, c: form.optionC, d: form.optionD },
                     correctAnswer: form.correctAnswer,
-                    complexity: form.complexity
+                    complexity: form.complexity,
+                    imageUrl: form.imageUrl.trim() || null
                 },
                 token ? { headers: { Authorization: `Bearer ${token}` } } : {}
             );
@@ -129,6 +131,27 @@ export default function RequestCardModal({ onClose }) {
                             <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Question</label>
                             <textarea value={form.text} onChange={set('text')}
                                 placeholder="What is your trivia question?" required rows={3} style={iStyle} />
+                        </div>
+                        <div>
+                            <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Image URL (optional)</label>
+                            <input
+                                value={form.imageUrl}
+                                onChange={set('imageUrl')}
+                                placeholder="https://example.com/image.png"
+                                style={iStyle}
+                            />
+                            <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                Allowed: png, jpg, jpeg, svg, webp, gif
+                            </div>
+                            {form.imageUrl?.trim() && (
+                                <div style={{ marginTop: '8px' }}>
+                                    <img
+                                        src={form.imageUrl}
+                                        alt="Question preview"
+                                        style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                    />
+                                </div>
+                            )}
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             {[['optionA','A'],['optionB','B'],['optionC','C'],['optionD','D']].map(([field, lbl]) => (

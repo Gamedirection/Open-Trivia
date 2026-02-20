@@ -25,10 +25,14 @@ export default function Game() {
     const [guessCounts, setGuessCounts] = useState({});
     const [result, setResult] = useState(null);
     const [reportMessage, setReportMessage] = useState('');
+    const [showReportOptions, setShowReportOptions] = useState(false);
+    const [reportType, setReportType] = useState('general');
+    const [reportNote, setReportNote] = useState('');
     const [showRequestModal, setShowRequestModal] = useState(false);
     const [answered, setAnswered] = useState(null);
     const [elapsedMs, setElapsedMs] = useState(0);
     const startRef = useRef(null);
+    const reportMenuRef = useRef(null);
     const [categories, setCategories] = useState([]);
     const [categorySearch, setCategorySearch] = useState('');
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
@@ -62,6 +66,18 @@ export default function Game() {
     useEffect(() => {
         fetchQuestion();
     }, []);
+
+    useEffect(() => {
+        if (!showReportOptions) return;
+        const handler = (e) => {
+            if (!reportMenuRef.current) return;
+            if (!reportMenuRef.current.contains(e.target)) {
+                setShowReportOptions(false);
+            }
+        };
+        window.addEventListener('mousedown', handler);
+        return () => window.removeEventListener('mousedown', handler);
+    }, [showReportOptions]);
 
     useEffect(() => {
         if (selectedCategoryId !== '') fetchQuestion();
@@ -131,33 +147,42 @@ export default function Game() {
         }
     };
 
-    const handleReport = async () => {
+    const handleReport = async (reasonOverride) => {
         if (!question) return;
-        if (!isLoggedIn) {
-            setReportMessage('⚠️ You must be logged in to report a question.');
-            return;
-        }
         try {
+            const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
             await axios.post(
                 `${API_URL}/game/report`,
-                { questionId: question.id, reason: 'User report' },
-                { headers: { Authorization: `Bearer ${token}` } }
+                { questionId: question.id, reason: reasonOverride || 'General Report' },
+                { headers }
             );
             setReportMessage('✅ Question reported successfully.');
         } catch (err) {
-            if (err.response?.status === 401) {
-                setReportMessage('⚠️ You must be logged in to report a question.');
-            } else {
-                setReportMessage('Question flagged for review.');
-            }
+            const msg = err.response?.data?.error || 'Question flagged for review.';
+            setReportMessage(`⚠️ ${msg}`);
         }
     };
 
-    const handleSuggest = () => {
-        if (!isLoggedIn) {
-            setReportMessage('⚠️ You must be logged in to suggest a question.');
+    const submitReport = async () => {
+        const trimmed = reportNote.trim();
+        const requiresNote = reportType === 'inappropriate' || reportType === 'incorrect';
+        if (requiresNote && !trimmed) {
+            setReportMessage('⚠️ Please add a short description.');
             return;
         }
+        const label = reportType === 'inappropriate'
+            ? 'Inappropriate'
+            : reportType === 'incorrect'
+                ? 'Incorrect'
+                : 'General Report';
+        const reason = requiresNote ? `${label}: ${trimmed}` : label;
+        await handleReport(reason);
+        setShowReportOptions(false);
+        setReportNote('');
+        setReportType('general');
+    };
+
+    const handleSuggest = () => {
         setShowRequestModal(true);
     };
 
@@ -370,27 +395,90 @@ export default function Game() {
                 <button
                     className="btn"
                     style={{
-                        backgroundColor: isLoggedIn ? 'var(--header-bg)' : '#adb5bd',
+                        backgroundColor: 'var(--header-bg)',
                         color: 'white', padding: '8px 15px',
-                        cursor: isLoggedIn ? 'pointer' : 'default'
+                        cursor: 'pointer'
                     }}
                     onClick={handleSuggest}
-                    title={!isLoggedIn ? 'Log in to suggest a question' : ''}
                 >
-                    📝 Suggest a Question {!isLoggedIn && '🔒'}
+                    📝 Suggest a Question
                 </button>
-                <button
-                    className="btn"
-                    style={{
-                        backgroundColor: isLoggedIn ? '#6c757d' : '#adb5bd',
-                        color: 'white', padding: '8px 20px',
-                        cursor: isLoggedIn ? 'pointer' : 'default'
-                    }}
-                    onClick={handleReport}
-                    title={!isLoggedIn ? 'Log in to report a question' : ''}
-                >
-                    ⚠ Report {!isLoggedIn && '🔒'}
-                </button>
+                <div style={{ position: 'relative' }} ref={reportMenuRef}>
+                    <button
+                        className="btn"
+                        style={{
+                            backgroundColor: '#6c757d',
+                            color: 'white', padding: '8px 20px',
+                            cursor: 'pointer'
+                        }}
+                        onClick={() => {
+                            setShowReportOptions((v) => !v);
+                            setReportMessage('');
+                        }}
+                    >
+                        ⚠ Report
+                    </button>
+                    {showReportOptions && (
+                        <div style={{
+                            position: 'absolute',
+                            right: 0,
+                            marginTop: '6px',
+                            backgroundColor: 'var(--card-bg)',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: '8px',
+                            padding: '10px',
+                            width: '260px',
+                            zIndex: 10,
+                            boxShadow: '0 6px 18px rgba(0,0,0,0.12)'
+                        }}>
+                            <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '6px' }}>
+                                Report Type
+                            </label>
+                            <select
+                                value={reportType}
+                                onChange={e => setReportType(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    padding: '6px 8px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-color)',
+                                    backgroundColor: 'var(--card-bg)',
+                                    color: 'var(--text-color)'
+                                }}
+                            >
+                                <option value="general">General Report</option>
+                                <option value="inappropriate">Inappropriate</option>
+                                <option value="incorrect">Incorrect</option>
+                            </select>
+                            {(reportType === 'inappropriate' || reportType === 'incorrect') && (
+                                <textarea
+                                    value={reportNote}
+                                    onChange={e => setReportNote(e.target.value)}
+                                    placeholder="Add a short description..."
+                                    rows={3}
+                                    style={{
+                                        marginTop: '8px',
+                                        width: '100%',
+                                        padding: '6px 8px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border-color)',
+                                        backgroundColor: 'var(--card-bg)',
+                                        color: 'var(--text-color)',
+                                        resize: 'vertical'
+                                    }}
+                                />
+                            )}
+                            <div style={{ display: 'flex', gap: '8px', marginTop: '10px', justifyContent: 'flex-end' }}>
+                                <button className="btn" onClick={() => setShowReportOptions(false)} style={{ padding: '6px 10px' }}>
+                                    Cancel
+                                </button>
+                                <button className="btn" onClick={submitReport} style={{ padding: '6px 10px', backgroundColor: '#6c757d', color: 'white' }}>
+                                    Submit
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {reportMessage && (

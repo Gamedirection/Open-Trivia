@@ -5,6 +5,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
+const multer = require('multer');
+const AdmZip = require('adm-zip');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -57,25 +59,151 @@ function normalizeImageUrl(url) {
 
 function isAllowedImageUrl(url) {
     if (!url) return false;
-    if (!/^https?:\/\//i.test(url)) return false;
-    return /\.(png|jpe?g|svg|webp)(\?.*)?$/i.test(url);
+    const isHttp = /^https?:\/\//i.test(url);
+    const isLocal = url.startsWith('/uploads/') || url.startsWith('/api/uploads/');
+    if (!isHttp && !isLocal) return false;
+    return /\.(png|jpe?g|svg|webp|gif)(\?.*)?$/i.test(url);
 }
 
-async function checkImageSize(url, maxKb) {
-    if (!url || !maxKb || maxKb <= 0) return true;
+async function fetchImageHead(url) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 4000);
     try {
-        const controller = new AbortController();
-        const t = setTimeout(() => controller.abort(), 4000);
         const r = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
-        clearTimeout(t);
+        const type = r.headers.get('content-type') || '';
         const len = r.headers.get('content-length');
-        if (!len) return true;
         const bytes = Number(len);
-        if (!Number.isFinite(bytes)) return true;
-        return bytes <= maxKb * 1024;
-    } catch {
-        return true;
+        return { ok: r.ok, type, bytes: Number.isFinite(bytes) ? bytes : null };
+    } finally {
+        clearTimeout(t);
     }
+}
+
+async function validateImageUrl(url, maxKb) {
+    if (!url) return { ok: true };
+    const isHttp = /^https?:\/\//i.test(url);
+    const isLocal = url.startsWith('/uploads/') || url.startsWith('/api/uploads/');
+    if (!isHttp && !isLocal) {
+        return { ok: false, error: 'Image URL must be http(s) or a local upload path' };
+    }
+    if (isLocal) {
+        if (!isAllowedImageUrl(url)) {
+            return { ok: false, error: 'Image URL must end with png, jpg, jpeg, svg, webp, or gif' };
+        }
+        return { ok: true };
+    }
+    if (isAllowedImageUrl(url)) {
+        if (maxKb > 0) {
+            const head = await fetchImageHead(url);
+            if (head.bytes !== null && head.bytes > maxKb * 1024) {
+                return { ok: false, error: `Image exceeds ${maxKb} KB limit` };
+            }
+        }
+        return { ok: true };
+    }
+    try {
+        const head = await fetchImageHead(url);
+        const type = String(head.type || '').toLowerCase();
+        const okType = [
+            'image/png',
+            'image/jpeg',
+            'image/webp',
+            'image/svg+xml',
+            'image/gif'
+        ];
+        if (!okType.includes(type)) {
+            return { ok: false, error: 'Image URL must be an image (png, jpg, jpeg, svg, webp, gif)' };
+        }
+        if (maxKb > 0 && head.bytes !== null && head.bytes > maxKb * 1024) {
+            return { ok: false, error: `Image exceeds ${maxKb} KB limit` };
+        }
+        return { ok: true };
+    } catch {
+        return { ok: false, error: 'Unable to verify image URL' };
+    }
+}
+
+function isAllowedImageUpload(file) {
+    if (!file) return false;
+    const okMime = ['image/png', 'image/jpeg', 'image/webp', 'image/svg+xml', 'image/gif'];
+    const ext = String(path.extname(file.originalname || '')).toLowerCase();
+    const okExt = ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif'];
+    return okMime.includes(file.mimetype) && okExt.includes(ext);
+}
+
+function slugifyName(name) {
+    return String(name || 'category')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'category';
+}
+
+function csvEscape(value) {
+    const s = value === null || value === undefined ? '' : String(value);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function parseCsvLines(text) {
+    const lines = String(text || '').split(/\r?\n/).filter(l => l.trim().length > 0);
+    if (!lines.length) return { header: [], rows: [] };
+    const parseLine = (line) => {
+        const out = [];
+        let cur = '';
+        let inQuotes = false;
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            if (ch === '"' && (i === 0 || line[i - 1] !== '\\')) {
+                if (inQuotes && line[i + 1] === '"') {
+                    cur += '"';
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+            } else if (ch === ',' && !inQuotes) {
+                out.push(cur);
+                cur = '';
+            } else {
+                cur += ch;
+            }
+        }
+        out.push(cur);
+        return out;
+    };
+    const header = parseLine(lines[0]).map(h => h.trim());
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+        const row = parseLine(lines[i]);
+        const obj = {};
+        header.forEach((h, idx) => { obj[h] = (row[idx] || '').trim(); });
+        rows.push(obj);
+    }
+    return { header, rows };
+}
+
+async function uniqueCategoryName(base, existing) {
+    let name = String(base || 'Category').trim() || 'Category';
+    const lower = (s) => s.toLowerCase();
+    if (!existing.has(lower(name))) {
+        existing.add(lower(name));
+        return name;
+    }
+    let i = 2;
+    while (existing.has(lower(`${name} ${i}`))) i++;
+    const next = `${name} ${i}`;
+    existing.add(lower(next));
+    return next;
+}
+
+function isLocalImageUrl(url) {
+    return url && (url.startsWith('/uploads/') || url.startsWith('/api/uploads/'));
+}
+
+function extractRelativeImagePath(url) {
+    if (!url) return null;
+    if (url.startsWith('/api/uploads/')) return url.replace('/api/uploads/', '');
+    if (url.startsWith('/uploads/')) return url.replace('/uploads/', '');
+    return null;
 }
 
 async function enforceRateLimit(action, key, opts) {
@@ -384,6 +512,7 @@ async function initDatabase() {
                 option_d TEXT NOT NULL,
                 correct_answer CHAR(1) NOT NULL,
                 complexity VARCHAR(20) NOT NULL,
+                image_url TEXT,
                 submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 status VARCHAR(20) DEFAULT 'pending'
             );
@@ -489,6 +618,7 @@ async function initDatabase() {
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
+            `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
             `ALTER TABLE question_reports ADD COLUMN IF NOT EXISTS reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP`,
@@ -614,6 +744,9 @@ const app = express();
 app.use(cors({ origin: ['http://localhost:3009','http://localhost:3000'], credentials: true }));
 app.use(express.json());
 app.use((req, _res, next) => { console.log(`📨 ${req.method} ${req.path}`); next(); });
+const uploadsRoot = path.join(__dirname, 'uploads');
+app.use('/uploads', express.static(uploadsRoot));
+app.use('/api/uploads', express.static(uploadsRoot));
 
 // ── Leaderboard Scheduler ─────────────────────────────────────────────────────
 function computeNextRun(period, fromDate = new Date()) {
@@ -762,7 +895,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason','display_name','show_email'],
         categories: ['id','name'],
         questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'],
-        pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','submitted_at','status'],
+        pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'],
         game_sessions: ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'],
         question_reports: ['id','question_id','reason','reported_at'],
         score_resets: ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'],
@@ -977,6 +1110,14 @@ app.post('/categories', async (req, res) => {
 app.delete('/categories/:id', async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
+        const catRow = await pool.query('SELECT id, name FROM categories WHERE id=$1', [req.params.id]);
+        if (!catRow.rows.length) return res.status(404).json({ error: 'Category not found' });
+        const snapshot = await collectSnapshot();
+        await runQuery('INSERT INTO backup_snapshots (note, data) VALUES ($1, $2)', [
+            `Pre-delete backup for category ${catRow.rows[0].name} (id:${catRow.rows[0].id})`,
+            snapshot
+        ]);
+        await auditLog(getTokenUser(req)?.id || null, 'CATEGORY_DELETE_BACKUP', `Backup created before deleting category ${catRow.rows[0].id}`);
         await runQuery('DELETE FROM categories WHERE id=$1', [req.params.id]);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1011,15 +1152,10 @@ app.post('/questions', async (req, res) => {
         if (!catCheck.rows.length) return res.status(400).json({ error: `Category ${categoryId} not found` });
         const normalizedImageUrl = normalizeImageUrl(imageUrl);
         if (normalizedImageUrl) {
-            if (!isAllowedImageUrl(normalizedImageUrl)) {
-                return res.status(400).json({ error: 'Image URL must be http(s) and end with png, jpg, jpeg, svg, or webp' });
-            }
             const imgSettings = await getImageSettings();
             const maxKb = Number(imgSettings.max_image_kb) || 0;
-            if (maxKb > 0) {
-                const ok = await checkImageSize(normalizedImageUrl, maxKb);
-                if (!ok) return res.status(400).json({ error: `Image exceeds ${maxKb} KB limit` });
-            }
+            const chk = await validateImageUrl(normalizedImageUrl, maxKb);
+            if (!chk.ok) return res.status(400).json({ error: chk.error });
         }
         const r = await runQuery(
             `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
@@ -1036,15 +1172,10 @@ app.put('/questions/:id', async (req, res) => {
     try {
         const normalizedImageUrl = normalizeImageUrl(imageUrl);
         if (normalizedImageUrl) {
-            if (!isAllowedImageUrl(normalizedImageUrl)) {
-                return res.status(400).json({ error: 'Image URL must be http(s) and end with png, jpg, jpeg, svg, or webp' });
-            }
             const imgSettings = await getImageSettings();
             const maxKb = Number(imgSettings.max_image_kb) || 0;
-            if (maxKb > 0) {
-                const ok = await checkImageSize(normalizedImageUrl, maxKb);
-                if (!ok) return res.status(400).json({ error: `Image exceeds ${maxKb} KB limit` });
-            }
+            const chk = await validateImageUrl(normalizedImageUrl, maxKb);
+            if (!chk.ok) return res.status(400).json({ error: chk.error });
         }
         const r = await runQuery(
             `UPDATE questions SET category_id=$1,text=$2,option_a=$3,option_b=$4,option_c=$5,
@@ -1475,7 +1606,7 @@ app.post('/me/profile', async (req, res) => {
 // ── PENDING QUESTIONS — rate-limited for guests and users ─────────────────────
 app.post('/pending-questions', async (req, res) => {
     const u = getTokenUser(req);
-    const { categoryName, text, options, correctAnswer, complexity } = req.body;
+    const { categoryName, text, options, correctAnswer, complexity, imageUrl } = req.body;
     if (!categoryName || !text || !options || !correctAnswer || !complexity)
         return res.status(400).json({ error: 'All fields required' });
     try {
@@ -1511,11 +1642,18 @@ app.post('/pending-questions', async (req, res) => {
                 }
             }
         }
+        const normalizedImageUrl = normalizeImageUrl(imageUrl);
+        if (normalizedImageUrl) {
+            const imgSettings = await getImageSettings();
+            const maxKb = Number(imgSettings.max_image_kb) || 0;
+            const chk = await validateImageUrl(normalizedImageUrl, maxKb);
+            if (!chk.ok) return res.status(400).json({ error: chk.error });
+        }
         await runQuery(
             `INSERT INTO pending_questions
-             (user_id,submitted_by_email,category_name,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [userId, email, categoryName, text, options.a, options.b, options.c, options.d, correctAnswer, complexity]
+             (user_id,submitted_by_email,category_name,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+            [userId, email, categoryName, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1698,6 +1836,269 @@ app.post('/admin/image-settings', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── ADMIN: IMAGE UPLOADS ──────────────────────────────────────────────────────
+app.post('/admin/images/upload', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const upload = multer({ storage: multer.memoryStorage() }).single('image');
+    upload(req, res, async (err) => {
+        if (err) return res.status(400).json({ error: 'Upload failed' });
+        if (!req.file) return res.status(400).json({ error: 'No image provided' });
+        if (!isAllowedImageUpload(req.file)) {
+            return res.status(400).json({ error: 'Only png, jpg, jpeg, svg, webp, gif allowed' });
+        }
+        const settings = await getImageSettings();
+        const maxKb = Number(settings.max_image_kb) || 0;
+        if (maxKb > 0 && req.file.size > maxKb * 1024) {
+            return res.status(400).json({ error: `Image exceeds ${maxKb} KB limit` });
+        }
+        const ext = String(path.extname(req.file.originalname || '')).toLowerCase();
+        const safeExt = ext || '.png';
+        const name = `q_${Date.now()}_${crypto.randomBytes(6).toString('hex')}${safeExt}`;
+        const dir = path.join(uploadsRoot, 'questions');
+        fs.mkdirSync(dir, { recursive: true });
+        const full = path.join(dir, name);
+        fs.writeFileSync(full, req.file.buffer);
+        const url = `/api/uploads/questions/${name}`;
+        res.json({ url });
+    });
+});
+
+// ── ADMIN: CATEGORY PACK EXPORT/IMPORT ───────────────────────────────────────
+app.post('/admin/categories/export-zip', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { categoryIds } = req.body || {};
+    const ids = Array.isArray(categoryIds) ? categoryIds.map(n => parseInt(n, 10)).filter(Boolean) : [];
+    if (!ids.length) return res.status(400).json({ error: 'categoryIds required' });
+    try {
+        const cats = await pool.query('SELECT id, name FROM categories WHERE id = ANY($1)', [ids]);
+        if (!cats.rows.length) return res.status(404).json({ error: 'No categories found' });
+        const mainZip = new AdmZip();
+        const imgSettings = await getImageSettings();
+        const maxKb = Number(imgSettings.max_image_kb) || 0;
+        const usedNames = new Set();
+
+        for (const cat of cats.rows) {
+            const q = await pool.query(
+                `SELECT q.*
+                 FROM questions q
+                 WHERE q.category_id=$1
+                 ORDER BY q.id ASC`,
+                [cat.id]
+            );
+            const header = ['category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'];
+            const rows = [];
+            const catZip = new AdmZip();
+            for (const row of q.rows) {
+                let imageUrl = row.image_url || '';
+                if (imageUrl && isLocalImageUrl(imageUrl)) {
+                    const rel = extractRelativeImagePath(imageUrl);
+                    if (rel) {
+                        const full = path.join(uploadsRoot, rel);
+                        if (fs.existsSync(full)) {
+                            const baseName = path.basename(full);
+                            const imageBytes = fs.readFileSync(full);
+                            if (maxKb === 0 || imageBytes.length <= maxKb * 1024) {
+                                catZip.addFile(`images/${baseName}`, imageBytes);
+                                imageUrl = `images/${baseName}`;
+                            }
+                        }
+                    }
+                }
+                rows.push([
+                    cat.name,
+                    row.text,
+                    row.option_a,
+                    row.option_b,
+                    row.option_c,
+                    row.option_d,
+                    row.correct_answer,
+                    row.complexity,
+                    row.disabled,
+                    imageUrl
+                ]);
+            }
+            const csv = [
+                header.join(','),
+                ...rows.map(r => r.map(csvEscape).join(','))
+            ].join(os.EOL);
+            catZip.addFile('questions.csv', Buffer.from(csv, 'utf8'));
+            let safeName = slugifyName(cat.name);
+            let candidate = safeName;
+            let i = 2;
+            while (usedNames.has(candidate)) {
+                candidate = `${safeName}-${i++}`;
+            }
+            usedNames.add(candidate);
+            mainZip.addFile(`${candidate}.zip`, catZip.toBuffer());
+        }
+
+        const out = mainZip.toBuffer();
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', 'attachment; filename="category_packs.zip"');
+        res.send(out);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/categories/template-zip', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const zip = new AdmZip();
+        const header = ['category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'];
+        const example = [
+            'General',
+            'What is the capital of France?',
+            'Paris',
+            'Rome',
+            'Berlin',
+            'Madrid',
+            'A',
+            'easy',
+            'false',
+            ''
+        ];
+        const csv = [header.join(','), example.map(csvEscape).join(',')].join(os.EOL);
+        zip.addFile('questions.csv', Buffer.from(csv, 'utf8'));
+        zip.addFile('images/README.txt', Buffer.from('Place local images in this folder and reference them as images/filename.ext in image_url.', 'utf8'));
+        const out = zip.toBuffer();
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', 'attachment; filename="category_pack_template.zip"');
+        res.send(out);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+async function importCategoryZipBuffer(buf) {
+    const imgSettings = await getImageSettings();
+    const maxKb = Number(imgSettings.max_image_kb) || 0;
+    const zip = new AdmZip(buf);
+    const entries = zip.getEntries();
+    const groups = new Map();
+    const nestedZips = [];
+    for (const e of entries) {
+        if (e.isDirectory) continue;
+        if (e.entryName.toLowerCase().endsWith('.zip')) {
+            nestedZips.push(e);
+            continue;
+        }
+        const parts = e.entryName.split('/');
+        const group = parts.length > 1 ? parts[0] : '_root';
+        if (!groups.has(group)) groups.set(group, []);
+        groups.get(group).push(e);
+    }
+
+    const existingRows = await pool.query('SELECT name FROM categories');
+    const existing = new Set(existingRows.rows.map(r => r.name.toLowerCase()));
+    let inserted = 0;
+
+    for (const [group, files] of groups.entries()) {
+        const csvEntry = files.find(f => f.entryName.toLowerCase().endsWith('.csv'));
+        if (!csvEntry) continue;
+        const { rows } = parseCsvLines(csvEntry.getData().toString('utf8'));
+        if (!rows.length) continue;
+
+        const catMap = new Map();
+        const imgFiles = new Map();
+        for (const f of files) {
+            if (f.entryName.toLowerCase().includes('/images/')) {
+                imgFiles.set(f.entryName.split('/images/')[1], f);
+            }
+        }
+
+        for (const row of rows) {
+            const baseName = row.category_name || (group !== '_root' ? group : 'Category');
+            let catId = catMap.get(baseName.toLowerCase());
+            if (!catId) {
+                const catName = await uniqueCategoryName(baseName, existing);
+                let cat = (await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1)', [catName])).rows[0];
+                if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [catName])).rows[0];
+                catId = cat.id;
+                catMap.set(baseName.toLowerCase(), catId);
+            }
+
+            let imageUrl = normalizeImageUrl(row.image_url);
+            if (imageUrl && imageUrl.startsWith('images/')) {
+                const imageKey = imageUrl.replace(/^images\//, '');
+                const file = imgFiles.get(imageKey);
+                if (file) {
+                    const ext = path.extname(file.entryName).toLowerCase();
+                    if (['.png','.jpg','.jpeg','.svg','.webp','.gif'].includes(ext)) {
+                        if (maxKb === 0 || file.header.size <= maxKb * 1024) {
+                            const name = `q_${Date.now()}_${crypto.randomBytes(6).toString('hex')}${ext}`;
+                            const dir = path.join(uploadsRoot, 'questions');
+                            fs.mkdirSync(dir, { recursive: true });
+                            fs.writeFileSync(path.join(dir, name), file.getData());
+                            imageUrl = `/api/uploads/questions/${name}`;
+                        }
+                    }
+                }
+            }
+            if (imageUrl && !imageUrl.startsWith('/api/uploads/')) {
+                const chk = await validateImageUrl(imageUrl, maxKb);
+                if (!chk.ok) imageUrl = null;
+            }
+
+            await runQuery(
+                `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url,disabled)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                [
+                    catId,
+                    row.question_text,
+                    row.option_a,
+                    row.option_b,
+                    row.option_c,
+                    row.option_d,
+                    String(row.correct_answer || 'A').trim().toUpperCase().slice(0,1),
+                    (row.complexity || 'medium').trim().toLowerCase(),
+                    imageUrl || null,
+                    String(row.disabled || '').toLowerCase() === 'true'
+                ]
+            );
+            inserted++;
+        }
+    }
+    for (const nz of nestedZips) {
+        inserted += await importCategoryZipBuffer(nz.getData());
+    }
+    return inserted;
+}
+
+app.post('/admin/categories/import-zip', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const upload = multer({ storage: multer.memoryStorage() }).single('file');
+    upload(req, res, async (err) => {
+        if (err) return res.status(400).json({ error: 'Upload failed' });
+        if (!req.file) return res.status(400).json({ error: 'No zip provided' });
+        try {
+            const inserted = await importCategoryZipBuffer(req.file.buffer);
+            res.json({ success: true, inserted });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+});
+
+app.post('/admin/categories/import-github', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { repoUrl } = req.body || {};
+    if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' });
+    try {
+        let zipUrl = repoUrl;
+        if (/github\.com\/[^/]+\/[^/]+/i.test(repoUrl)) {
+            const parts = repoUrl.replace(/\/$/, '').split('/');
+            const owner = parts[parts.length - 2];
+            const repo = parts[parts.length - 1].replace(/\.git$/, '');
+            zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/main.zip`;
+        }
+        const r = await fetch(zipUrl);
+        if (!r.ok) return res.status(400).json({ error: 'Failed to fetch repo zip' });
+        const buf = Buffer.from(await r.arrayBuffer());
+        const inserted = await importCategoryZipBuffer(buf);
+        res.json({ success: true, inserted });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── ADMIN: SCORING SETTINGS ───────────────────────────────────────────────────
 app.get('/admin/scoring-settings', async (req, res) => {
     const admin = requireAdmin(req, res);
@@ -1869,13 +2270,10 @@ app.post('/admin/questions/import-csv', async (req, res) => {
             if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [catName])).rows[0];
             const normalizedImageUrl = normalizeImageUrl(obj.image_url);
             if (normalizedImageUrl) {
-                if (!isAllowedImageUrl(normalizedImageUrl)) continue;
                 const imgSettings = await getImageSettings();
                 const maxKb = Number(imgSettings.max_image_kb) || 0;
-                if (maxKb > 0) {
-                    const ok = await checkImageSize(normalizedImageUrl, maxKb);
-                    if (!ok) continue;
-                }
+                const chk = await validateImageUrl(normalizedImageUrl, maxKb);
+                if (!chk.ok) continue;
             }
             await runQuery(
                 `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
@@ -1969,7 +2367,7 @@ app.post('/admin/backup/restore-user', async (req, res) => {
 
             await restoreRows('game_sessions', ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'], games);
             await restoreRows('score_resets', ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'], resets);
-            await restoreRows('pending_questions', ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','submitted_at','status'], pending);
+            await restoreRows('pending_questions', ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'], pending);
 
             await client.query('COMMIT');
         } catch (err) {
@@ -2068,10 +2466,17 @@ app.post('/admin/approve/:id', async (req, res) => {
         if (!pq) return res.status(404).json({ error: 'Not found' });
         let cat = (await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1)', [pq.category_name])).rows[0];
         if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [pq.category_name])).rows[0];
+        const normalizedImageUrl = normalizeImageUrl(pq.image_url);
+        if (normalizedImageUrl) {
+            const imgSettings = await getImageSettings();
+            const maxKb = Number(imgSettings.max_image_kb) || 0;
+            const chk = await validateImageUrl(normalizedImageUrl, maxKb);
+            if (!chk.ok) return res.status(400).json({ error: chk.error });
+        }
         await runQuery(
-            `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-            [cat.id, pq.text, pq.option_a, pq.option_b, pq.option_c, pq.option_d, pq.correct_answer, pq.complexity]
+            `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [cat.id, pq.text, pq.option_a, pq.option_b, pq.option_c, pq.option_d, pq.correct_answer, pq.complexity, normalizedImageUrl]
         );
         await runQuery(`UPDATE pending_questions SET status='approved' WHERE id=$1`, [req.params.id]);
         res.json({ success: true });

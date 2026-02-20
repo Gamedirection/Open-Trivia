@@ -37,6 +37,8 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
     const [optC, setOptC]       = useState(initial.option_c ?? '');
     const [optD, setOptD]       = useState(initial.option_d ?? '');
     const [imageUrl, setImageUrl] = useState(initial.image_url ?? '');
+    const [imageFile, setImageFile] = useState(null);
+    const [uploading, setUploading] = useState(false);
     const [correct, setCorrect] = useState(initial.correct_answer?.toUpperCase() ?? 'A');
     const [level, setLevel]     = useState(initial.complexity ?? 'easy');
 
@@ -62,6 +64,27 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
             complexity: level,
             imageUrl: imageUrl.trim() || null
         });
+    };
+
+    const uploadImage = async () => {
+        if (!imageFile) return;
+        setUploading(true);
+        try {
+            const token = localStorage.getItem('token');
+            const form = new FormData();
+            form.append('image', imageFile);
+            const res = await axios.post(`${API_URL}/admin/images/upload`, form, {
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+            if (res.data?.url) setImageUrl(res.data.url);
+        } catch (e) {
+            alert('Upload failed: ' + (e.response?.data?.error || e.message));
+        } finally {
+            setUploading(false);
+        }
     };
 
     if (categories.length === 0) return (
@@ -90,8 +113,20 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
                     style={iStyle}
                     placeholder="https://example.com/image.png"
                 />
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '8px' }}>
+                <input
+                        type="file"
+                        accept=".png,.jpg,.jpeg,.svg,.webp,.gif"
+                        onChange={e => setImageFile(e.target.files?.[0] || null)}
+                        style={{ fontSize: '12px' }}
+                    />
+                    <button type="button" className="btn" onClick={uploadImage} disabled={!imageFile || uploading}
+                        style={{ padding: '6px 10px', fontSize: '12px', backgroundColor: '#6c757d', color: 'white' }}>
+                        {uploading ? 'Uploading...' : 'Upload Image'}
+                    </button>
+                </div>
                 <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                    Allowed: png, jpg, jpeg, svg, webp
+                    Allowed: png, jpg, jpeg, svg, webp, gif
                 </div>
                 {imageUrl?.trim() && (
                     <div style={{ marginTop: '8px' }}>
@@ -230,6 +265,11 @@ export default function Admin() {
     // Image settings
     const [imageSettings, setImageSettings] = useState(null);
     const [imageSettingsSaving, setImageSettingsSaving] = useState(false);
+    // Category packs
+    const [categoryExportIds, setCategoryExportIds] = useState([]);
+    const [exportingCats, setExportingCats] = useState(false);
+    const [importingCats, setImportingCats] = useState(false);
+    const [githubRepoUrl, setGithubRepoUrl] = useState('');
     // Data management
     const [backups, setBackups] = useState([]);
     const [backupLoading, setBackupLoading] = useState(false);
@@ -567,6 +607,58 @@ export default function Admin() {
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Export failed')); }
     };
 
+    const exportCategoryPacks = async () => {
+        if (!categoryExportIds.length) {
+            flash('❌ Select at least one category');
+            return;
+        }
+        setExportingCats(true);
+        try {
+            const r = await axios.post(
+                `${API_URL}/admin/categories/export-zip`,
+                { categoryIds: categoryExportIds },
+                { ...authCfg(), responseType: 'arraybuffer' }
+            );
+            const blob = new Blob([r.data], { type: 'application/zip' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `category_packs_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.zip`;
+            a.click();
+            URL.revokeObjectURL(url);
+        } catch (e) { flash('❌ Category export failed'); }
+        finally { setExportingCats(false); }
+    };
+
+    const importCategoryZip = async (file) => {
+        setImportingCats(true);
+        try {
+            const form = new FormData();
+            form.append('file', file);
+            await axios.post(`${API_URL}/admin/categories/import-zip`, form, {
+                headers: {
+                    ...authCfg().headers,
+                    'Content-Type': 'multipart/form-data'
+                }
+            });
+            flash('✅ Category packs imported');
+            loadCategories();
+        } catch (e) { flash('❌ Category import failed'); }
+        finally { setImportingCats(false); }
+    };
+
+    const importFromGithub = async () => {
+        if (!githubRepoUrl.trim()) return;
+        setImportingCats(true);
+        try {
+            await axios.post(`${API_URL}/admin/categories/import-github`, { repoUrl: githubRepoUrl.trim() }, authCfg());
+            flash('✅ Imported from GitHub');
+            setGithubRepoUrl('');
+            loadCategories();
+        } catch (e) { flash('❌ GitHub import failed'); }
+        finally { setImportingCats(false); }
+    };
+
     const importData = async (file, mode) => {
         try {
             const text = await file.text();
@@ -829,6 +921,13 @@ export default function Admin() {
                                 </div>
                             </div>
                             <p style={{ fontWeight: '600', color: 'var(--text-color)', margin: '0 0 10px' }}>{q.text}</p>
+                            {q.image_url && (
+                                <img
+                                    src={q.image_url}
+                                    alt="Question"
+                                    style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '6px', border: '1px solid var(--border-color)', marginBottom: '10px' }}
+                                />
+                            )}
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', marginBottom: '14px' }}>
                                 {['a','b','c','d'].map(l => {
                                     const isCorrect = q.correct_answer?.toLowerCase() === l;
@@ -1148,62 +1247,87 @@ export default function Admin() {
                     </div>
 
                     <div style={{ ...cardStyle, marginBottom: '16px' }}>
-                        <h4 style={{ marginTop: 0 }}>Questions CSV</h4>
-                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-                            <button
-                                className="btn"
-                                onClick={async () => {
-                                    try {
-                                        const r = await axios.get(`${API_URL}/admin/questions/csv`, authCfg());
-                                        const blob = new Blob([r.data], { type: 'text/csv' });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = 'questions_export.csv';
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                    } catch (e) { flash('❌ Export CSV failed'); }
-                                }}
-                            >
-                                Download CSV
-                            </button>
-                            <button
-                                className="btn"
-                                onClick={async () => {
-                                    try {
-                                        const r = await axios.get(`${API_URL}/admin/questions/template`, authCfg());
-                                        const blob = new Blob([r.data], { type: 'text/csv' });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = 'questions_template.csv';
-                                        a.click();
-                                        URL.revokeObjectURL(url);
-                                    } catch (e) { flash('❌ Template download failed'); }
-                                }}
-                                style={{ backgroundColor: '#6c757d', color: 'white' }}
-                            >
-                                Download Template
-                            </button>
-                            <input
-                                type="file"
-                                accept=".csv,text/csv"
-                                onChange={e => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    const reader = new FileReader();
-                                    reader.onload = async () => {
+                        <h4 style={{ marginTop: 0 }}>Category Packs (CSV + Images)</h4>
+                        <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
+                            You can share packs via GitHub. Browse collections at <a href="https://questions.trivia.gamedirection.net" target="_blank" rel="noreferrer">questions.trivia.gamedirection.net</a>.
+                            Template repo: <a href="https://github.com/Gamedirection/Open-Trivia-Questions.git" target="_blank" rel="noreferrer">Open-Trivia-Questions</a>.
+                            Be cautious: zip files from others may contain malicious content.
+                        </div>
+                        <div style={{ display: 'grid', gap: '10px' }}>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <button className="btn btn-primary" onClick={exportCategoryPacks} disabled={exportingCats}>
+                                    {exportingCats ? 'Exporting...' : 'Export Selected Categories'}
+                                </button>
+                                <button
+                                    className="btn"
+                                    onClick={async () => {
                                         try {
-                                            await axios.post(`${API_URL}/admin/questions/import-csv`, { csv: reader.result }, authCfg());
-                                            flash('✅ CSV imported');
-                                        } catch (err) {
-                                            flash('❌ CSV import failed');
-                                        }
-                                    };
-                                    reader.readAsText(file);
-                                    e.target.value = '';
-                                }}
-                            />
+                                            const r = await axios.get(`${API_URL}/admin/categories/template-zip`, { ...authCfg(), responseType: 'arraybuffer' });
+                                            const blob = new Blob([r.data], { type: 'application/zip' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = 'category_pack_template.zip';
+                                            a.click();
+                                            URL.revokeObjectURL(url);
+                                        } catch (e) { flash('❌ Template download failed'); }
+                                    }}
+                                    style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                >
+                                    Download Template
+                                </button>
+                                <label style={{ fontSize: '12px', color: '#666', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={categoryExportIds.length === categories.length && categories.length > 0}
+                                        onChange={e => setCategoryExportIds(e.target.checked ? categories.map(c => c.id) : [])}
+                                    />
+                                    Select all
+                                </label>
+                            </div>
+
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
+                                {categories.map(c => (
+                                    <label key={c.id} style={{ fontSize: '12px', color: '#444', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={categoryExportIds.includes(c.id)}
+                                            onChange={e => {
+                                                setCategoryExportIds(prev =>
+                                                    e.target.checked ? [...prev, c.id] : prev.filter(id => id !== c.id)
+                                                );
+                                            }}
+                                        />
+                                        {c.name}
+                                    </label>
+                                ))}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    type="file"
+                                    accept=".zip,application/zip"
+                                    onChange={e => {
+                                        const file = e.target.files?.[0];
+                                        if (!file) return;
+                                        importCategoryZip(file);
+                                        e.target.value = '';
+                                    }}
+                                />
+                                {importingCats && <span style={{ fontSize: '12px', color: '#888' }}>Importing...</span>}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                <input
+                                    value={githubRepoUrl}
+                                    onChange={e => setGithubRepoUrl(e.target.value)}
+                                    placeholder="GitHub repo URL (or zip URL)"
+                                    style={{ flex: 1, minWidth: '220px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                />
+                                <button className="btn" onClick={importFromGithub} disabled={importingCats || !githubRepoUrl.trim()}>
+                                    Import from GitHub
+                                </button>
+                            </div>
                         </div>
                     </div>
 
@@ -1422,7 +1546,7 @@ export default function Admin() {
                                         style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                     />
                                     <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
-                                        0 disables the size limit. Only png, jpg, jpeg, svg, webp are accepted.
+                                        0 disables the size limit. Only png, jpg, jpeg, svg, webp, gif are accepted.
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: '10px' }}>

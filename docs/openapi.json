@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Open-Trivia API",
-    "version": "0.1.0",
+    "version": "0.3.0",
     "description": "Open-Trivia backend API"
   },
   "servers": [
@@ -103,7 +103,35 @@
         "parameters": [
           { "name": "categoryId", "in": "query", "schema": { "type": "integer" } }
         ],
-        "responses": { "200": { "description": "Question" } }
+        "responses": {
+          "200": {
+            "description": "Question",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "integer" },
+                    "category": { "type": "string" },
+                    "text": { "type": "string" },
+                    "complexity": { "type": "string" },
+                    "image_url": { "type": "string", "nullable": true },
+                    "options": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "char": { "type": "string" },
+                          "text": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/game/submit": {
@@ -129,14 +157,60 @@
         "responses": { "200": { "description": "Result" } }
       }
     },
+    "/game/report": {
+      "post": {
+        "summary": "Report a question",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "questionId": { "type": "integer" },
+                  "reason": { "type": "string" }
+                },
+                "required": ["questionId"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Report accepted" } }
+      }
+    },
     "/leaderboard": {
       "get": {
         "summary": "Leaderboard",
         "parameters": [
           { "name": "categoryId", "in": "query", "schema": { "type": "integer" } },
-          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["day","month","year"] } }
+          { "name": "timeframe", "in": "query", "schema": { "type": "string", "enum": ["day","month","year"] } },
+          { "name": "includeAnonymous", "in": "query", "schema": { "type": "string", "enum": ["1","true"] } }
         ],
-        "responses": { "200": { "description": "Leaderboard rows" } }
+        "responses": {
+          "200": {
+            "description": "Leaderboard rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "integer" },
+                      "email": { "type": "string", "nullable": true },
+                      "display_name": { "type": "string" },
+                      "gravatar_hash": { "type": "string" },
+                      "score": { "type": "integer" },
+                      "correct_answered": { "type": "integer" },
+                      "total_answered": { "type": "integer" },
+                      "role": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/me/stats": {
@@ -149,11 +223,240 @@
         "responses": { "200": { "description": "Stats" } }
       }
     },
+    "/me/profile": {
+      "get": {
+        "summary": "My profile",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Profile" } }
+      },
+      "post": {
+        "summary": "Update profile",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "displayName": { "type": "string" },
+                  "showEmail": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Profile updated" } }
+      }
+    },
+    "/pending-questions": {
+      "post": {
+        "summary": "Suggest a question",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "categoryName": { "type": "string" },
+                  "text": { "type": "string" },
+                  "options": {
+                    "type": "object",
+                    "properties": {
+                      "a": { "type": "string" },
+                      "b": { "type": "string" },
+                      "c": { "type": "string" },
+                      "d": { "type": "string" }
+                    }
+                  },
+                  "correctAnswer": { "type": "string" },
+                  "complexity": { "type": "string" },
+                  "imageUrl": { "type": "string" }
+                },
+                "required": ["categoryName","text","options","correctAnswer","complexity"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Submission accepted" } }
+      }
+    },
     "/admin/users": {
       "get": {
         "summary": "List users (admin)",
         "security": [{ "bearerAuth": [] }],
         "responses": { "200": { "description": "Users" } }
+      }
+    },
+    "/admin/privacy-settings": {
+      "get": {
+        "summary": "Get privacy settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Privacy settings" } }
+      },
+      "post": {
+        "summary": "Update privacy settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "hide_emails_globally": { "type": "boolean" },
+                  "hide_emails_by_default": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Privacy settings saved" } }
+      }
+    },
+    "/admin/rate-limit-settings": {
+      "get": {
+        "summary": "Get rate limit settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Rate limit settings" } }
+      },
+      "post": {
+        "summary": "Update rate limit settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "guest_min_interval_ms": { "type": "integer" },
+                  "user_burst_window_ms": { "type": "integer" },
+                  "user_burst_max": { "type": "integer" },
+                  "user_cooldown_ms": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Rate limit settings saved" } }
+      }
+    },
+    "/admin/image-settings": {
+      "get": {
+        "summary": "Get image settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Image settings" } }
+      },
+      "post": {
+        "summary": "Update image settings (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "max_image_kb": { "type": "integer" }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Image settings saved" } }
+      }
+    },
+    "/admin/images/upload": {
+      "post": {
+        "summary": "Upload question image (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "image": { "type": "string", "format": "binary" }
+                },
+                "required": ["image"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Image uploaded" } }
+      }
+    },
+    "/admin/categories/export-zip": {
+      "post": {
+        "summary": "Export selected categories as zip (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "categoryIds": { "type": "array", "items": { "type": "integer" } }
+                },
+                "required": ["categoryIds"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Zip file" } }
+      }
+    },
+    "/admin/categories/template-zip": {
+      "get": {
+        "summary": "Download category pack template (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "responses": { "200": { "description": "Template zip" } }
+      }
+    },
+    "/admin/categories/import-zip": {
+      "post": {
+        "summary": "Import category pack zip (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": { "type": "string", "format": "binary" }
+                },
+                "required": ["file"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Import result" } }
+      }
+    },
+    "/admin/categories/import-github": {
+      "post": {
+        "summary": "Import category pack from GitHub (admin)",
+        "security": [{ "bearerAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repoUrl": { "type": "string" }
+                },
+                "required": ["repoUrl"]
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Import result" } }
       }
     },
     "/admin/backup": {

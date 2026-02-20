@@ -15,7 +15,9 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Adaptive question difficulty based on answer accuracy.
 - User dashboard with stats and per-category breakdown.
 - Profile & privacy: display name edits, email visibility toggle, optional Gravatar icons.
-- Question images by URL (png/jpg/jpeg/svg/webp).
+- Question images by URL or admin uploads (png/jpg/jpeg/svg/webp).
+- User suggestions can include image URLs.
+- Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip or GitHub.
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
 - Helm chart for Kubernetes deployments.
@@ -59,6 +61,22 @@ DIFF_DOWN_THRESHOLD=0.8
 - Leaderboard: scheduled resets and scoring settings.
 - Privacy and rate-limit settings (reports/suggestions).
 - Image size limits for question images.
+- Admin image uploads for questions.
+- Category pack export/import (zip or GitHub) + template download.
+
+## Shared Collections
+Community packs can be browsed at `questions.trivia.gamedirection.net`.  
+We recommend a public GitHub repo per collection and a README that links to other collections.  
+Template repo: https://github.com/Gamedirection/Open-Trivia-Questions.git  
+Security note: only import zips from sources you trust.
+
+**Category Pack Format**
+- A zip per category (or a zip containing multiple category zips).
+- Each category zip includes `questions.csv` and an optional `images/` folder.
+- CSV `image_url` can reference `images/filename.ext` or an external URL.
+
+## Collections Repo Template
+See `docs/Open-Trivia-Questions-README.md` for the template README content used by the collections repo.
 - Data Management: backups, export/import, restore a single user.
 - Questions: CSV export/import and template download.
 
