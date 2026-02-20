@@ -1,5 +1,14 @@
 # Changelog / Roadmap
 
+## v0.3.0
+- Privacy controls: display names, hide email toggle, admin global/default email visibility.
+- Leaderboard privacy: hide emails for logged-out users, optional name censoring, optional anonymous users, optional Gravatar icons (auto-hidden when censoring).
+- Admin controls for rate limits on reports/suggestions with guest and user tuning (0 disables).
+- Rate limits for guest/user reports and question suggestions.
+- Blocked users excluded from leaderboard.
+- Question images via URL with admin-configurable size limits (png/jpg/jpeg/svg/webp).
+- Footer now includes version link to changelog.
+
 ## v0.2.0
 - Admin data management: backups, export/import, per‑user restore.
 - CSV question import/export + template.

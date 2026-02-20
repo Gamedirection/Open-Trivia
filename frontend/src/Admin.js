@@ -36,6 +36,7 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
     const [optB, setOptB]       = useState(initial.option_b ?? '');
     const [optC, setOptC]       = useState(initial.option_c ?? '');
     const [optD, setOptD]       = useState(initial.option_d ?? '');
+    const [imageUrl, setImageUrl] = useState(initial.image_url ?? '');
     const [correct, setCorrect] = useState(initial.correct_answer?.toUpperCase() ?? 'A');
     const [level, setLevel]     = useState(initial.complexity ?? 'easy');
 
@@ -53,7 +54,14 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
         if (!text.trim() || !optA.trim() || !optB.trim() || !optC.trim() || !optD.trim())
             return alert('Please fill in all fields.');
         if (!catId) return alert('Select a category first.');
-        onSubmit({ categoryId: Number(catId), text, options: { a: optA, b: optB, c: optC, d: optD }, correctAnswer: correct, complexity: level });
+        onSubmit({
+            categoryId: Number(catId),
+            text,
+            options: { a: optA, b: optB, c: optC, d: optD },
+            correctAnswer: correct,
+            complexity: level,
+            imageUrl: imageUrl.trim() || null
+        });
     };
 
     if (categories.length === 0) return (
@@ -73,6 +81,27 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
             <div>
                 <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Question</label>
                 <textarea value={text} onChange={e => setText(e.target.value)} rows={3} style={iStyle} placeholder="Write the question here..." />
+            </div>
+            <div>
+                <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Image URL (optional)</label>
+                <input
+                    value={imageUrl}
+                    onChange={e => setImageUrl(e.target.value)}
+                    style={iStyle}
+                    placeholder="https://example.com/image.png"
+                />
+                <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                    Allowed: png, jpg, jpeg, svg, webp
+                </div>
+                {imageUrl?.trim() && (
+                    <div style={{ marginTop: '8px' }}>
+                        <img
+                            src={imageUrl}
+                            alt="Question preview"
+                            style={{ maxWidth: '100%', maxHeight: '180px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                        />
+                    </div>
+                )}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 {[['A', optA, setOptA], ['B', optB, setOptB], ['C', optC, setOptC], ['D', optD, setOptD]].map(([lbl, val, set]) => (
@@ -192,6 +221,15 @@ export default function Admin() {
     // Scoring settings
     const [scoring, setScoring] = useState(null);
     const [scoringSaving, setScoringSaving] = useState(false);
+    // Privacy settings
+    const [privacy, setPrivacy] = useState(null);
+    const [privacySaving, setPrivacySaving] = useState(false);
+    // Rate limit settings
+    const [rateLimits, setRateLimits] = useState(null);
+    const [rateLimitsSaving, setRateLimitsSaving] = useState(false);
+    // Image settings
+    const [imageSettings, setImageSettings] = useState(null);
+    const [imageSettingsSaving, setImageSettingsSaving] = useState(false);
     // Data management
     const [backups, setBackups] = useState([]);
     const [backupLoading, setBackupLoading] = useState(false);
@@ -270,6 +308,27 @@ export default function Admin() {
         } catch { flash('❌ Failed to load scoring settings'); }
     }, []);
 
+    const loadPrivacySettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/privacy-settings`, authCfg());
+            setPrivacy(r.data);
+        } catch { flash('❌ Failed to load privacy settings'); }
+    }, []);
+
+    const loadRateLimitSettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/rate-limit-settings`, authCfg());
+            setRateLimits(r.data);
+        } catch { flash('❌ Failed to load rate limit settings'); }
+    }, []);
+
+    const loadImageSettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/image-settings`, authCfg());
+            setImageSettings(r.data);
+        } catch { flash('❌ Failed to load image settings'); }
+    }, []);
+
     useEffect(() => { loadCategories(); }, []);
     useEffect(() => { if (tab === 'review') loadReview(); }, [tab]);
     useEffect(() => { if (tab === 'questions' && selCat) loadQuestions(selCat.id); }, [selCat, tab]);
@@ -277,6 +336,9 @@ export default function Admin() {
     useEffect(() => { if (tab === 'audit') loadAuditLog(); }, [tab]);
     useEffect(() => { if (tab === 'leaderboard') loadLeaderboardSchedule(); }, [tab]);
     useEffect(() => { if (tab === 'leaderboard') loadScoringSettings(); }, [tab]);
+    useEffect(() => { if (tab === 'leaderboard') loadPrivacySettings(); }, [tab]);
+    useEffect(() => { if (tab === 'leaderboard') loadRateLimitSettings(); }, [tab]);
+    useEffect(() => { if (tab === 'leaderboard') loadImageSettings(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
 
     // ── Category actions ───────────────────────────────────────────────────────
@@ -438,6 +500,49 @@ export default function Admin() {
             flash('✅ Scoring settings saved');
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
         finally { setScoringSaving(false); }
+    };
+
+    const savePrivacySettings = async () => {
+        if (!privacy) return;
+        setPrivacySaving(true);
+        try {
+            const r = await axios.post(`${API_URL}/admin/privacy-settings`, {
+                hide_emails_globally: !!privacy.hide_emails_globally,
+                hide_emails_by_default: !!privacy.hide_emails_by_default
+            }, authCfg());
+            setPrivacy(r.data);
+            flash('✅ Privacy settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setPrivacySaving(false); }
+    };
+
+    const saveRateLimitSettings = async () => {
+        if (!rateLimits) return;
+        setRateLimitsSaving(true);
+        try {
+            const r = await axios.post(`${API_URL}/admin/rate-limit-settings`, {
+                guest_min_interval_ms: Number(rateLimits.guest_min_interval_ms),
+                user_burst_window_ms: Number(rateLimits.user_burst_window_ms),
+                user_burst_max: Number(rateLimits.user_burst_max),
+                user_cooldown_ms: Number(rateLimits.user_cooldown_ms),
+            }, authCfg());
+            setRateLimits(r.data);
+            flash('✅ Rate limit settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setRateLimitsSaving(false); }
+    };
+
+    const saveImageSettings = async () => {
+        if (!imageSettings) return;
+        setImageSettingsSaving(true);
+        try {
+            const r = await axios.post(`${API_URL}/admin/image-settings`, {
+                max_image_kb: Number(imageSettings.max_image_kb),
+            }, authCfg());
+            setImageSettings(r.data);
+            flash('✅ Image settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setImageSettingsSaving(false); }
     };
 
     const createBackup = async () => {
@@ -615,6 +720,13 @@ export default function Admin() {
                                                             })()}
                                                         </div>
                                                         <p style={{ margin: '0 0 10px', fontWeight: '600', color: 'var(--text-color)', lineHeight: '1.4' }}>{q.text}</p>
+                                                        {q.image_url && (
+                                                            <img
+                                                                src={q.image_url}
+                                                                alt="Question"
+                                                                style={{ maxWidth: '100%', maxHeight: '160px', borderRadius: '6px', border: '1px solid var(--border-color)', marginBottom: '10px' }}
+                                                            />
+                                                        )}
                                                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px' }}>
                                                             {['a','b','c','d'].map(l => {
                                                                 const isCorrect = q.correct_answer?.toLowerCase() === l;
@@ -1185,6 +1297,146 @@ export default function Admin() {
                                         </div>
                                     );
                                 })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ ...cardStyle, marginTop: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Privacy Settings</h4>
+                        {!privacy ? (
+                            <p style={{ color: '#888' }}>Loading settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!privacy.hide_emails_globally}
+                                        onChange={e => setPrivacy({ ...privacy, hide_emails_globally: e.target.checked })}
+                                    />
+                                    Hide all emails on the leaderboard (global override)
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!privacy.hide_emails_by_default}
+                                        onChange={e => setPrivacy({ ...privacy, hide_emails_by_default: e.target.checked })}
+                                    />
+                                    Hide emails by default for new users (users can opt in)
+                                </label>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button className="btn btn-primary" onClick={savePrivacySettings} disabled={privacySaving}>
+                                        {privacySaving ? 'Saving...' : 'Save Privacy Settings'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadPrivacySettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ ...cardStyle, marginTop: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Report & Suggestion Rate Limits</h4>
+                        {!rateLimits ? (
+                            <p style={{ color: '#888' }}>Loading settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Guest Min Interval (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={rateLimits.guest_min_interval_ms}
+                                            onChange={e => setRateLimits({ ...rateLimits, guest_min_interval_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                        <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                            0 disables guest limits
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>User Burst Window (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={rateLimits.user_burst_window_ms}
+                                            onChange={e => setRateLimits({ ...rateLimits, user_burst_window_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>User Burst Max</label>
+                                        <input
+                                            type="number"
+                                            value={rateLimits.user_burst_max}
+                                            onChange={e => setRateLimits({ ...rateLimits, user_burst_max: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                        <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                            0 disables user limits
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>User Cooldown (ms)</label>
+                                        <input
+                                            type="number"
+                                            value={rateLimits.user_cooldown_ms}
+                                            onChange={e => setRateLimits({ ...rateLimits, user_cooldown_ms: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button className="btn btn-primary" onClick={saveRateLimitSettings} disabled={rateLimitsSaving}>
+                                        {rateLimitsSaving ? 'Saving...' : 'Save Rate Limits'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadRateLimitSettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ ...cardStyle, marginTop: '16px' }}>
+                        <h4 style={{ marginTop: 0 }}>Question Image Limits</h4>
+                        {!imageSettings ? (
+                            <p style={{ color: '#888' }}>Loading settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <div>
+                                    <label style={{ fontSize: '12px', color: '#888' }}>Max Image Size (KB)</label>
+                                    <input
+                                        type="number"
+                                        value={imageSettings.max_image_kb}
+                                        onChange={e => setImageSettings({ ...imageSettings, max_image_kb: e.target.value })}
+                                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                    />
+                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                        0 disables the size limit. Only png, jpg, jpeg, svg, webp are accepted.
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', gap: '10px' }}>
+                                    <button className="btn btn-primary" onClick={saveImageSettings} disabled={imageSettingsSaving}>
+                                        {imageSettingsSaving ? 'Saving...' : 'Save Image Settings'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadImageSettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload
+                                    </button>
+                                </div>
                             </div>
                         )}
                     </div>

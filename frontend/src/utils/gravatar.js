@@ -148,3 +148,9 @@ export function gravatarUrl(email, size = 80) {
   const hash = md5(normalized);
   return `https://www.gravatar.com/avatar/${hash}?s=${size}&d=identicon`;
 }
+
+export function gravatarUrlFromHash(hash, size = 80) {
+  const safe = String(hash || '').trim().toLowerCase();
+  if (!safe) return null;
+  return `https://www.gravatar.com/avatar/${safe}?s=${size}&d=identicon`;
+}

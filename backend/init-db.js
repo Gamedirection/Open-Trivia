@@ -23,7 +23,9 @@ async function initDB() {
                 score INTEGER DEFAULT 0,
                 is_anonymous BOOLEAN DEFAULT FALSE,
                 blocked_until TIMESTAMP,
-                blocked_reason TEXT
+                blocked_reason TEXT,
+                display_name VARCHAR(60),
+                show_email BOOLEAN
             );
             
             CREATE TABLE IF NOT EXISTS categories (
@@ -41,7 +43,8 @@ async function initDB() {
                 option_d TEXT NOT NULL,
                 correct_answer CHAR(1) NOT NULL,
                 complexity VARCHAR(20) NOT NULL,
-                disabled BOOLEAN DEFAULT FALSE
+                disabled BOOLEAN DEFAULT FALSE,
+                image_url TEXT
             );
             
             CREATE TABLE IF NOT EXISTS pending_questions (
@@ -117,12 +120,45 @@ async function initDB() {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS privacy_settings (
+                id SERIAL PRIMARY KEY,
+                hide_emails_globally BOOLEAN DEFAULT FALSE,
+                hide_emails_by_default BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS rate_limit_settings (
+                id SERIAL PRIMARY KEY,
+                guest_min_interval_ms INT DEFAULT 300000,
+                user_burst_window_ms INT DEFAULT 300000,
+                user_burst_max INT DEFAULT 3,
+                user_cooldown_ms INT DEFAULT 300000,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS image_settings (
+                id SERIAL PRIMARY KEY,
+                max_image_kb INT DEFAULT 512,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
                 admin_id INT REFERENCES users(id),
                 action VARCHAR(255) NOT NULL,
                 details TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS action_limits (
+                id SERIAL PRIMARY KEY,
+                action VARCHAR(60) NOT NULL,
+                key VARCHAR(120) NOT NULL,
+                count INT DEFAULT 0,
+                window_start TIMESTAMP,
+                last_action_at TIMESTAMP,
+                blocked_until TIMESTAMP,
+                UNIQUE (action, key)
             );
             
             -- Create Admin User if none exists
@@ -132,8 +168,15 @@ async function initDB() {
             BEGIN
                 SELECT COUNT(*) INTO user_count FROM users;
                 IF user_count = 0 THEN
-                    INSERT INTO users (email, password_hash, role, score)
-                    VALUES ('asierputowski@ctmsit.com', '\$2a\$06\$RSlUWkudtmDFVSUy94ktluvq/HQGAxE46XbfqeAoVBZdaaOzAcTMK', 'admin', 0);
+                    INSERT INTO users (email, password_hash, role, score, display_name, show_email)
+                    VALUES (
+                        'asierputowski@ctmsit.com',
+                        '\$2a\$06\$RSlUWkudtmDFVSUy94ktluvq/HQGAxE46XbfqeAoVBZdaaOzAcTMK',
+                        'admin',
+                        0,
+                        split_part('asierputowski@ctmsit.com', '@', 1),
+                        TRUE
+                    );
                 END IF;
             END $$;
         `);

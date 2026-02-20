@@ -285,6 +285,22 @@ export default function Game() {
             </div>
 
             {/* Question text */}
+            {question.image_url && (
+                <div style={{ margin: '10px 0 18px' }}>
+                    <img
+                        src={question.image_url}
+                        alt="Question"
+                        style={{
+                            width: '100%',
+                            maxHeight: '320px',
+                            objectFit: 'contain',
+                            borderRadius: '8px',
+                            border: '1px solid var(--border-color)',
+                            backgroundColor: 'var(--card-bg)'
+                        }}
+                    />
+                </div>
+            )}
             <h2 style={{ marginTop: '10px', marginBottom: '25px', color: 'var(--text-color)', lineHeight: '1.4' }}>
                 {question.text}
             </h2>

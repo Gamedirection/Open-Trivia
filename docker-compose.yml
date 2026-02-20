@@ -9,7 +9,8 @@ services:
       - postgres_data:/var/lib/postgresql/data/
 
   frontend:
-    image: ghcr.io/gamedirection/open-trivia-frontend:latest
+    #image: ghcr.io/gamedirection/open-trivia-frontend:latest
+    build: ./frontend
     ports:
       - "3000:3000"
     depends_on:
@@ -20,8 +21,8 @@ services:
 #      - REACT_APP_API_URL=http://backend:5000/api
 
   backend:
-    image: ghcr.io/gamedirection/open-trivia-backend:latest
-    #build: ./backend
+    #image: ghcr.io/gamedirection/open-trivia-backend:latest
+    build: ./backend
     ports:
       - "3001:5000"
     #secrets: # DockerSwarm

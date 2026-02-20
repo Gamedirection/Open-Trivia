@@ -10,9 +10,12 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 ## Key Features
 - Auth with password reset, admin roles, and account blocking.
 - Leaderboards with category and timeframe filters (day/month/year).
+- Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries.
 - Timer-based scoring with configurable min/max points.
 - Adaptive question difficulty based on answer accuracy.
 - User dashboard with stats and per-category breakdown.
+- Profile & privacy: display name edits, email visibility toggle, optional Gravatar icons.
+- Question images by URL (png/jpg/jpeg/svg/webp).
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
 - Helm chart for Kubernetes deployments.
@@ -54,6 +57,8 @@ DIFF_DOWN_THRESHOLD=0.8
 ## Admin Features
 - Users: role changes, password reset, block/unblock with duration.
 - Leaderboard: scheduled resets and scoring settings.
+- Privacy and rate-limit settings (reports/suggestions).
+- Image size limits for question images.
 - Data Management: backups, export/import, restore a single user.
 - Questions: CSV export/import and template download.
 

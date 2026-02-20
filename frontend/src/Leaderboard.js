@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { gravatarUrl } from './utils/gravatar';
+import { gravatarUrl, gravatarUrlFromHash } from './utils/gravatar';
 import { cachedGet } from './utils/api';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
@@ -15,6 +15,31 @@ export default function Leaderboard() {
     const [resetting, setResetting] = useState(false);
 
     const token = localStorage.getItem('token');
+    const readCensorPref = () => {
+        try {
+            return localStorage.getItem('leaderboard_censor_names') === 'true';
+        } catch {
+            return false;
+        }
+    };
+    const readAnonymousPref = () => {
+        try {
+            return localStorage.getItem('leaderboard_show_anonymous') === 'true';
+        } catch {
+            return false;
+        }
+    };
+    const readGravatarPref = () => {
+        try {
+            const v = localStorage.getItem('leaderboard_show_gravatar');
+            return v === null ? true : v === 'true';
+        } catch {
+            return true;
+        }
+    };
+    const [censorNames, setCensorNames] = useState(readCensorPref);
+    const [showAnonymous, setShowAnonymous] = useState(readAnonymousPref);
+    const [showGravatar, setShowGravatar] = useState(readGravatarPref);
 
     useEffect(() => {
         fetchCategories();
@@ -22,7 +47,17 @@ export default function Leaderboard() {
 
     useEffect(() => {
         fetchLeaderboard();
-    }, [categoryId, timeframe]);
+    }, [categoryId, timeframe, showAnonymous]);
+
+    useEffect(() => {
+        const handler = () => {
+            setCensorNames(readCensorPref());
+            setShowAnonymous(readAnonymousPref());
+            setShowGravatar(readGravatarPref());
+        };
+        window.addEventListener('leaderboard-pref-updated', handler);
+        return () => window.removeEventListener('leaderboard-pref-updated', handler);
+    }, []);
 
     const fetchCategories = async () => {
         try {
@@ -41,7 +76,9 @@ export default function Leaderboard() {
             const params = {};
             if (categoryId) params.categoryId = categoryId;
             if (timeframe && timeframe !== 'all') params.timeframe = timeframe;
-            const res = await cachedGet(axios, `${API_URL}/leaderboard`, { params }, 5000);
+            if (showAnonymous) params.includeAnonymous = '1';
+            const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+            const res = await cachedGet(axios, `${API_URL}/leaderboard`, { params, headers }, 5000);
             setUsers(res.data);
         } catch (err) {
             console.error("Failed to load leaderboard", err);
@@ -90,6 +127,52 @@ export default function Leaderboard() {
         if (pct >= 57) return 'F+';
         if (pct >= 53) return 'F';
         return 'F-';
+    };
+
+    const displayNameFor = (user) => {
+        const name = user.display_name || 'Player';
+        if (!censorNames) return name;
+        const cleaned = String(name).trim();
+        if (!cleaned) return 'P';
+        return cleaned.slice(0, 2).padEnd(2, '•');
+    };
+
+    const renderAvatar = (user) => {
+        if (!showGravatar || censorNames) return null;
+        const hashUrl = gravatarUrlFromHash(user.gravatar_hash, 70);
+        if (hashUrl) {
+            return (
+                <img
+                    src={hashUrl}
+                    alt={user.display_name || 'Player'}
+                    width={35}
+                    height={35}
+                    style={{
+                        borderRadius: '50%',
+                        marginRight: '15px',
+                        border: '2px solid var(--header-bg)',
+                        flexShrink: 0
+                    }}
+                />
+            );
+        }
+        if (user.email) {
+            return (
+                <img
+                    src={gravatarUrl(user.email, 70)}
+                    alt={user.email}
+                    width={35}
+                    height={35}
+                    style={{
+                        borderRadius: '50%',
+                        marginRight: '15px',
+                        border: '2px solid var(--header-bg)',
+                        flexShrink: 0
+                    }}
+                />
+            );
+        }
+        return null;
     };
 
     if (loading) return <div className="card" style={{ textAlign: 'center' }}>Loading Top Players...</div>;
@@ -142,7 +225,8 @@ export default function Leaderboard() {
                 </div>
             </div>
 
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <div className="table-scroll">
+                <table className="leaderboard-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
                 <thead>
                     <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left', color: 'var(--text-color)' }}>
                         <th style={{ padding: '10px' }}>Rank</th>
@@ -169,21 +253,12 @@ export default function Leaderboard() {
                             <td style={{ padding: '10px', fontWeight: 'bold' }}>{index + 1}</td>
                             <td style={{ padding: '10px' }}>
                                 <div style={{ display: 'flex', alignItems: 'center' }}>
-                                    <img
-                                        src={gravatarUrl(user.email, 70)}
-                                        alt={user.email}
-                                        width={35}
-                                        height={35}
-                                        style={{
-                                            borderRadius: '50%',
-                                            marginRight: '15px',
-                                            border: '2px solid var(--header-bg)',
-                                            flexShrink: 0
-                                        }}
-                                    />
+                                    {renderAvatar(user)}
                                     <div>
-                                        <div style={{ fontWeight: 'bold' }}>{user.email.split('@')[0]}</div>
-                                        <div style={{ fontSize: '0.8rem', opacity: '0.7' }}>{user.email}</div>
+                                        <div style={{ fontWeight: 'bold' }}>{displayNameFor(user)}</div>
+                                        {user.email && (
+                                            <div style={{ fontSize: '0.8rem', opacity: '0.7' }}>{user.email}</div>
+                                        )}
                                     </div>
                                 </div>
                             </td>
@@ -208,7 +283,8 @@ export default function Leaderboard() {
                         );
                     })}
                 </tbody>
-            </table>
+                </table>
+            </div>
         </div>
     );
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import pkg from '../package.json';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import Game from './Game';
 import Admin from './Admin';
@@ -14,6 +15,16 @@ const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
 console.log('🔧 API URL configured as:', API_URL);
 
 // ── Header ─────────────────────────────────────────────────────────────────────
+const getDisplayName = (u) => {
+    if (!u) return 'Guest';
+    if (u.display_name) return u.display_name;
+    if (u.email) {
+        const parts = String(u.email).split('@');
+        return parts[0] || u.email;
+    }
+    return 'Guest';
+};
+
 const AppHeader = ({ user, onLogout }) => {
     const { isDark, toggleTheme } = useTheme();
     const token = localStorage.getItem('token');
@@ -27,10 +38,10 @@ const AppHeader = ({ user, onLogout }) => {
     }, [user]);
 
     const userRole = storedUser?.role || 'player';
-    const userEmail = storedUser?.email || 'Guest';
+    const displayName = getDisplayName(storedUser);
 
     return (
-        <div className="header" style={{
+        <div className="header app-header" style={{
             padding: '20px',
             backgroundColor: 'var(--header-bg)',
             color: 'var(--header-text)',
@@ -39,6 +50,8 @@ const AppHeader = ({ user, onLogout }) => {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: '12px',
             boxShadow: '0 2px 5px rgba(0,0,0,0.1)'
         }}>
             <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -57,7 +70,7 @@ const AppHeader = ({ user, onLogout }) => {
                     </div>
                 )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <div className="app-header-actions" style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
                 <button
                     className="btn"
                     style={{
@@ -82,7 +95,7 @@ const AppHeader = ({ user, onLogout }) => {
                             />
                         )}
                         <span style={{ fontSize: '0.9rem' }}>
-                            Welcome, <strong>{userEmail.split('@')[0]}</strong>
+                            Welcome, <strong>{displayName}</strong>
                         </span>
                         <button
                             className="btn"
@@ -306,6 +319,12 @@ function App() {
     useEffect(() => {
         const stored = localStorage.getItem('user');
         if (stored) setUser(JSON.parse(stored));
+        const handler = () => {
+            const next = localStorage.getItem('user');
+            setUser(next ? JSON.parse(next) : null);
+        };
+        window.addEventListener('user-updated', handler);
+        return () => window.removeEventListener('user-updated', handler);
     }, []);
 
     return (
@@ -318,10 +337,10 @@ function App() {
 
                     {/* Main app shell */}
                     <Route path="*" element={
-                        <div className="container" style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
+                        <div className="container app-shell" style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
                             <AppHeader user={user} onLogout={handleLogout} />
 
-                            <nav style={{ marginBottom: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', display: 'flex', gap: '30px' }}>
+                            <nav className="app-nav" style={{ marginBottom: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', display: 'flex', gap: '30px', flexWrap: 'wrap' }}>
                                 <Link to="/" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Play Game</Link>
                                 {user && (
                                     <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>My Stats</Link>
@@ -352,6 +371,9 @@ function App() {
                                 </p>
                                 <p style={{ margin: '6px 0 0' }}>
                                     License: <a href="https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE" style={{ color: '#007bff', textDecoration: 'none' }}>LICENSE</a>
+                                </p>
+                                <p style={{ margin: '6px 0 0' }}>
+                                    Version: <a href="https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md" style={{ color: '#007bff', textDecoration: 'none' }}>v{pkg.version}</a>
                                 </p>
 
                                 <details style={{ marginTop: '12px' }}>

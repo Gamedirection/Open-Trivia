@@ -23,6 +23,144 @@ const DIFF_DOWN_THRESHOLD = parseFloat(process.env.DIFF_DOWN_THRESHOLD || '0.8')
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, n)); }
 
+function maskEmail(email) {
+    if (!email) return 'Player';
+    const parts = String(email).split('@');
+    if (!parts[0]) return email;
+    return parts[0];
+}
+
+function gravatarHash(email) {
+    if (!email) return null;
+    return crypto.createHash('md5').update(String(email).trim().toLowerCase()).digest('hex');
+}
+
+function resolveShowEmail(userShowEmail, privacySettings) {
+    if (userShowEmail === null || userShowEmail === undefined) {
+        return !privacySettings.hide_emails_by_default;
+    }
+    return !!userShowEmail;
+}
+
+function getClientIp(req) {
+    const xf = req.headers['x-forwarded-for'];
+    if (typeof xf === 'string' && xf.length) return xf.split(',')[0].trim();
+    if (Array.isArray(xf) && xf.length) return String(xf[0]);
+    return req.socket?.remoteAddress || 'unknown';
+}
+
+function normalizeImageUrl(url) {
+    const trimmed = String(url || '').trim();
+    if (!trimmed) return null;
+    return trimmed;
+}
+
+function isAllowedImageUrl(url) {
+    if (!url) return false;
+    if (!/^https?:\/\//i.test(url)) return false;
+    return /\.(png|jpe?g|svg|webp)(\?.*)?$/i.test(url);
+}
+
+async function checkImageSize(url, maxKb) {
+    if (!url || !maxKb || maxKb <= 0) return true;
+    try {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 4000);
+        const r = await fetch(url, { method: 'HEAD', redirect: 'follow', signal: controller.signal });
+        clearTimeout(t);
+        const len = r.headers.get('content-length');
+        if (!len) return true;
+        const bytes = Number(len);
+        if (!Number.isFinite(bytes)) return true;
+        return bytes <= maxKb * 1024;
+    } catch {
+        return true;
+    }
+}
+
+async function enforceRateLimit(action, key, opts) {
+    const {
+        minIntervalMs = 0,
+        burstWindowMs = 0,
+        burstMax = 0,
+        cooldownMs = 0,
+    } = opts || {};
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const r = await client.query(
+            'SELECT * FROM action_limits WHERE action=$1 AND key=$2 FOR UPDATE',
+            [action, key]
+        );
+        const now = new Date();
+        let row = r.rows[0];
+        if (!row) {
+            row = {
+                action,
+                key,
+                count: 0,
+                window_start: null,
+                last_action_at: null,
+                blocked_until: null,
+            };
+            await client.query(
+                `INSERT INTO action_limits (action, key, count, window_start, last_action_at, blocked_until)
+                 VALUES ($1,$2,$3,$4,$5,$6)`,
+                [action, key, 0, null, null, null]
+            );
+        }
+
+        if (row.blocked_until && new Date(row.blocked_until) > now) {
+            await client.query('COMMIT');
+            return { allowed: false, retryAfterMs: new Date(row.blocked_until) - now };
+        }
+
+        if (row.last_action_at && minIntervalMs > 0) {
+            const since = now - new Date(row.last_action_at);
+            if (since < minIntervalMs) {
+                await client.query('COMMIT');
+                return { allowed: false, retryAfterMs: minIntervalMs - since };
+            }
+        }
+
+        let nextCount = row.count || 0;
+        let nextWindowStart = row.window_start ? new Date(row.window_start) : null;
+        if (burstWindowMs > 0 && burstMax > 0) {
+            if (!nextWindowStart || (now - nextWindowStart) > burstWindowMs) {
+                nextWindowStart = now;
+                nextCount = 1;
+            } else {
+                nextCount += 1;
+            }
+            if (nextCount > burstMax) {
+                const blockedUntil = new Date(now.getTime() + cooldownMs);
+                await client.query(
+                    `UPDATE action_limits
+                     SET blocked_until=$3, last_action_at=$4, count=$5, window_start=$6
+                     WHERE action=$1 AND key=$2`,
+                    [action, key, blockedUntil, now, nextCount, nextWindowStart]
+                );
+                await client.query('COMMIT');
+                return { allowed: false, retryAfterMs: cooldownMs };
+            }
+        }
+
+        await client.query(
+            `UPDATE action_limits
+             SET last_action_at=$3, count=$4, window_start=$5, blocked_until=NULL
+             WHERE action=$1 AND key=$2`,
+            [action, key, now, nextCount, nextWindowStart]
+        );
+        await client.query('COMMIT');
+        return { allowed: true };
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 function computePoints(elapsedMs, complexity, settings) {
     const s = settings || {};
     const maxByDifficulty = {
@@ -213,7 +351,9 @@ async function initDatabase() {
                 score INTEGER DEFAULT 0,
                 is_anonymous BOOLEAN DEFAULT FALSE,
                 blocked_until TIMESTAMP,
-                blocked_reason TEXT
+                blocked_reason TEXT,
+                display_name VARCHAR(60),
+                show_email BOOLEAN
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
@@ -229,7 +369,8 @@ async function initDatabase() {
                 option_d TEXT NOT NULL,
                 correct_answer CHAR(1) NOT NULL,
                 complexity VARCHAR(20) NOT NULL,
-                disabled BOOLEAN DEFAULT FALSE
+                disabled BOOLEAN DEFAULT FALSE,
+                image_url TEXT
             );
             CREATE TABLE IF NOT EXISTS pending_questions (
                 id SERIAL PRIMARY KEY,
@@ -297,6 +438,25 @@ async function initDatabase() {
                 diff_down_threshold NUMERIC DEFAULT 0.8,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS privacy_settings (
+                id SERIAL PRIMARY KEY,
+                hide_emails_globally BOOLEAN DEFAULT FALSE,
+                hide_emails_by_default BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS rate_limit_settings (
+                id SERIAL PRIMARY KEY,
+                guest_min_interval_ms INT DEFAULT 300000,
+                user_burst_window_ms INT DEFAULT 300000,
+                user_burst_max INT DEFAULT 3,
+                user_cooldown_ms INT DEFAULT 300000,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS image_settings (
+                id SERIAL PRIMARY KEY,
+                max_image_kb INT DEFAULT 512,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id) ON DELETE CASCADE,
@@ -304,6 +464,16 @@ async function initDatabase() {
                 expires_at TIMESTAMP NOT NULL,
                 used BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS action_limits (
+                id SERIAL PRIMARY KEY,
+                action VARCHAR(60) NOT NULL,
+                key VARCHAR(120) NOT NULL,
+                count INT DEFAULT 0,
+                window_start TIMESTAMP,
+                last_action_at TIMESTAMP,
+                blocked_until TIMESTAMP,
+                UNIQUE (action, key)
             );
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
@@ -317,11 +487,14 @@ async function initDatabase() {
         // Safe migrations for existing databases
         const migrations = [
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE`,
+            `ALTER TABLE questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
             `ALTER TABLE question_reports ADD COLUMN IF NOT EXISTS reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason TEXT`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(60)`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_email BOOLEAN`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS category_id INT REFERENCES categories(id)`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
@@ -362,9 +535,41 @@ async function initDatabase() {
                 diff_down_threshold NUMERIC DEFAULT 0.8,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `CREATE TABLE IF NOT EXISTS privacy_settings (
+                id SERIAL PRIMARY KEY,
+                hide_emails_globally BOOLEAN DEFAULT FALSE,
+                hide_emails_by_default BOOLEAN DEFAULT TRUE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS rate_limit_settings (
+                id SERIAL PRIMARY KEY,
+                guest_min_interval_ms INT DEFAULT 300000,
+                user_burst_window_ms INT DEFAULT 300000,
+                user_burst_max INT DEFAULT 3,
+                user_cooldown_ms INT DEFAULT 300000,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS image_settings (
+                id SERIAL PRIMARY KEY,
+                max_image_kb INT DEFAULT 512,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_min_attempts INT DEFAULT 25`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_up_threshold NUMERIC DEFAULT 0.4`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_down_threshold NUMERIC DEFAULT 0.8`,
+            `UPDATE users SET display_name = split_part(email, '@', 1)
+             WHERE (display_name IS NULL OR display_name = '') AND position('@' in email) > 0`,
+            `UPDATE users SET show_email = FALSE WHERE show_email IS NULL`,
+            `CREATE TABLE IF NOT EXISTS action_limits (
+                id SERIAL PRIMARY KEY,
+                action VARCHAR(60) NOT NULL,
+                key VARCHAR(120) NOT NULL,
+                count INT DEFAULT 0,
+                window_start TIMESTAMP,
+                last_action_at TIMESTAMP,
+                blocked_until TIMESTAMP,
+                UNIQUE (action, key)
+            )`,
         ];
         for (const m of migrations) {
             try { await client.query(m); } catch(e) { console.log('Migration skipped:', e.message); }
@@ -375,7 +580,10 @@ async function initDatabase() {
         const check = await client.query('SELECT COUNT(*) FROM users WHERE email=$1', [adminEmail]);
         if (parseInt(check.rows[0].count) === 0) {
             const hash = await bcrypt.hash(adminPassword, 10);
-            await client.query('INSERT INTO users (email,password_hash,role,score) VALUES ($1,$2,$3,0)', [adminEmail, hash, 'admin']);
+            await client.query(
+                'INSERT INTO users (email,password_hash,role,score,display_name,show_email) VALUES ($1,$2,$3,0,$4,TRUE)',
+                [adminEmail, hash, 'admin', maskEmail(adminEmail)]
+            );
             console.log(`
 ╔══════════════════════════════════════════════════════════╗
 ║   🆕 ADMIN ACCOUNT CREATED — SAVE THESE CREDENTIALS     ║
@@ -482,6 +690,44 @@ async function getScoringSettings() {
     return inserted.rows[0];
 }
 
+async function getPrivacySettings() {
+    const r = await pool.query('SELECT * FROM privacy_settings ORDER BY id DESC LIMIT 1');
+    if (r.rows.length) return r.rows[0];
+    const inserted = await pool.query(`
+        INSERT INTO privacy_settings (hide_emails_globally, hide_emails_by_default)
+        VALUES (FALSE, TRUE)
+        RETURNING *`
+    );
+    return inserted.rows[0];
+}
+
+async function getRateLimitSettings() {
+    const r = await pool.query('SELECT * FROM rate_limit_settings ORDER BY id DESC LIMIT 1');
+    if (r.rows.length) return r.rows[0];
+    const inserted = await pool.query(`
+        INSERT INTO rate_limit_settings (
+            guest_min_interval_ms,
+            user_burst_window_ms,
+            user_burst_max,
+            user_cooldown_ms
+        )
+        VALUES (300000, 300000, 3, 300000)
+        RETURNING *`
+    );
+    return inserted.rows[0];
+}
+
+async function getImageSettings() {
+    const r = await pool.query('SELECT * FROM image_settings ORDER BY id DESC LIMIT 1');
+    if (r.rows.length) return r.rows[0];
+    const inserted = await pool.query(`
+        INSERT INTO image_settings (max_image_kb)
+        VALUES (512)
+        RETURNING *`
+    );
+    return inserted.rows[0];
+}
+
 async function collectSnapshot() {
     const tables = [
         'users',
@@ -493,6 +739,9 @@ async function collectSnapshot() {
         'score_resets',
         'leaderboard_schedules',
         'scoring_settings',
+        'privacy_settings',
+        'rate_limit_settings',
+        'image_settings',
         'audit_logs',
         'password_reset_tokens',
     ];
@@ -510,15 +759,18 @@ async function applySnapshot(snapshot, mode = 'replace') {
         throw new Error('Invalid snapshot data');
     }
     const tables = {
-        users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason'],
+        users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason','display_name','show_email'],
         categories: ['id','name'],
-        questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled'],
+        questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'],
         pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','submitted_at','status'],
         game_sessions: ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'],
         question_reports: ['id','question_id','reason','reported_at'],
         score_resets: ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'],
         leaderboard_schedules: ['id','period','enabled','next_run','last_run'],
         scoring_settings: ['id','min_points','max_easy','max_med','max_hard','fast_ms','slow_ms','diff_min_attempts','diff_up_threshold','diff_down_threshold','updated_at'],
+        privacy_settings: ['id','hide_emails_globally','hide_emails_by_default','updated_at'],
+        rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','updated_at'],
+        image_settings: ['id','max_image_kb','updated_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
         password_reset_tokens: ['id','user_id','token','expires_at','used','created_at'],
     };
@@ -527,7 +779,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
     try {
         await client.query('BEGIN');
         if (mode === 'replace') {
-            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, questions, categories, users RESTART IDENTITY CASCADE');
+            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, privacy_settings, rate_limit_settings, image_settings, questions, categories, users RESTART IDENTITY CASCADE');
         }
 
         for (const [table, cols] of Object.entries(tables)) {
@@ -559,6 +811,9 @@ async function applySnapshot(snapshot, mode = 'replace') {
             'score_resets_id_seq',
             'leaderboard_schedules_id_seq',
             'scoring_settings_id_seq',
+            'privacy_settings_id_seq',
+            'rate_limit_settings_id_seq',
+            'image_settings_id_seq',
             'audit_logs_id_seq',
             'password_reset_tokens_id_seq',
             'backup_snapshots_id_seq',
@@ -587,12 +842,15 @@ app.post('/register', async (req, res) => {
     if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
     try {
         const hashed = await bcrypt.hash(password, 10);
+        const privacy = await getPrivacySettings();
+        const showEmail = !privacy.hide_emails_by_default;
+        const displayName = maskEmail(email);
         // Only count non-anonymous real users to decide first-user-gets-admin
         const countRes = await pool.query('SELECT COUNT(*) FROM users WHERE is_anonymous=FALSE');
         const role = parseInt(countRes.rows[0].count) === 0 ? 'admin' : 'player';
         const r = await runQuery(
-            'INSERT INTO users (email,password_hash,role) VALUES ($1,$2,$3) RETURNING id,email,role,score',
-            [email, hashed, role]
+            'INSERT INTO users (email,password_hash,role,display_name,show_email) VALUES ($1,$2,$3,$4,$5) RETURNING id,email,role,score,display_name,show_email',
+            [email, hashed, role, displayName, showEmail]
         );
         const token = jwt.sign({ id: r.rows[0].id, role: r.rows[0].role }, process.env.JWT_SECRET, { expiresIn: '7d' });
         res.json({ user: r.rows[0], token });
@@ -613,8 +871,25 @@ app.post('/login', async (req, res) => {
         if (r.rows[0].blocked_until && new Date(r.rows[0].blocked_until) > new Date()) {
             return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0].blocked_until });
         }
+        let displayName = r.rows[0].display_name;
+        let showEmail = r.rows[0].show_email;
+        let needsUpdate = false;
+        if (!displayName) {
+            displayName = maskEmail(r.rows[0].email);
+            needsUpdate = true;
+        }
+        if (showEmail === null || showEmail === undefined) {
+            showEmail = true;
+            needsUpdate = true;
+        }
+        if (needsUpdate) {
+            await runQuery(
+                'UPDATE users SET display_name=$1, show_email=$2 WHERE id=$3',
+                [displayName, showEmail, r.rows[0].id]
+            );
+        }
         const token = jwt.sign({ id: r.rows[0].id, role: r.rows[0].role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        const { password_hash, ...user } = r.rows[0];
+        const { password_hash, ...user } = { ...r.rows[0], display_name: displayName, show_email: showEmail };
         res.json({ user, token });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -728,16 +1003,28 @@ app.get('/categories/:catId/questions', async (req, res) => {
 
 app.post('/questions', async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const { categoryId, text, options, correctAnswer, complexity } = req.body;
+    const { categoryId, text, options, correctAnswer, complexity, imageUrl } = req.body;
     if (!categoryId || !text || !options || !correctAnswer || !complexity)
         return res.status(400).json({ error: 'All fields required' });
     try {
         const catCheck = await pool.query('SELECT id FROM categories WHERE id=$1', [categoryId]);
         if (!catCheck.rows.length) return res.status(400).json({ error: `Category ${categoryId} not found` });
+        const normalizedImageUrl = normalizeImageUrl(imageUrl);
+        if (normalizedImageUrl) {
+            if (!isAllowedImageUrl(normalizedImageUrl)) {
+                return res.status(400).json({ error: 'Image URL must be http(s) and end with png, jpg, jpeg, svg, or webp' });
+            }
+            const imgSettings = await getImageSettings();
+            const maxKb = Number(imgSettings.max_image_kb) || 0;
+            if (maxKb > 0) {
+                const ok = await checkImageSize(normalizedImageUrl, maxKb);
+                if (!ok) return res.status(400).json({ error: `Image exceeds ${maxKb} KB limit` });
+            }
+        }
         const r = await runQuery(
-            `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity]
+            `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl]
         );
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -745,12 +1032,24 @@ app.post('/questions', async (req, res) => {
 
 app.put('/questions/:id', async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const { categoryId, text, options, correctAnswer, complexity } = req.body;
+    const { categoryId, text, options, correctAnswer, complexity, imageUrl } = req.body;
     try {
+        const normalizedImageUrl = normalizeImageUrl(imageUrl);
+        if (normalizedImageUrl) {
+            if (!isAllowedImageUrl(normalizedImageUrl)) {
+                return res.status(400).json({ error: 'Image URL must be http(s) and end with png, jpg, jpeg, svg, or webp' });
+            }
+            const imgSettings = await getImageSettings();
+            const maxKb = Number(imgSettings.max_image_kb) || 0;
+            if (maxKb > 0) {
+                const ok = await checkImageSize(normalizedImageUrl, maxKb);
+                if (!ok) return res.status(400).json({ error: `Image exceeds ${maxKb} KB limit` });
+            }
+        }
         const r = await runQuery(
             `UPDATE questions SET category_id=$1,text=$2,option_a=$3,option_b=$4,option_c=$5,
-             option_d=$6,correct_answer=$7,complexity=$8 WHERE id=$9 RETURNING *`,
-            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, req.params.id]
+             option_d=$6,correct_answer=$7,complexity=$8,image_url=$9 WHERE id=$10 RETURNING *`,
+            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl, req.params.id]
         );
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -797,7 +1096,14 @@ app.get('/game/next', async (req, res) => {
             const j = Math.floor(Math.random() * (i + 1));
             [options[i], options[j]] = [options[j], options[i]];
         }
-        res.json({ id: q.id, category: cat.rows[0]?.name || 'General', text: q.text, options, complexity: q.complexity });
+        res.json({
+            id: q.id,
+            category: cat.rows[0]?.name || 'General',
+            text: q.text,
+            options,
+            complexity: q.complexity,
+            image_url: q.image_url || null,
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -851,34 +1157,62 @@ app.post('/game/anonymous-session', async (req, res) => {
         const anonEmail = `anon_${crypto.randomBytes(8).toString('hex')}@anonymous.local`;
         const hash = await bcrypt.hash(crypto.randomBytes(16).toString('hex'), 10);
         const r = await runQuery(
-            'INSERT INTO users (email,password_hash,role,is_anonymous) VALUES ($1,$2,$3,TRUE) RETURNING id',
-            [anonEmail, hash, 'player']
+            'INSERT INTO users (email,password_hash,role,is_anonymous,display_name,show_email) VALUES ($1,$2,$3,TRUE,$4,FALSE) RETURNING id',
+            [anonEmail, hash, 'player', maskEmail(anonEmail)]
         );
         res.json({ anonymousId: r.rows[0].id });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Report a question — requires authentication
+// Report a question — rate-limited for guests and users
 app.post('/game/report', async (req, res) => {
-    const u = await requireAuth(req, res);
-    if (!u) return;
+    const u = getTokenUser(req);
     const { questionId, reason } = req.body;
     if (!questionId) return res.status(400).json({ error: 'questionId required' });
     try {
+        const limits = await getRateLimitSettings();
+        if (u) {
+            if (await isUserBlocked(u.id)) {
+                const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [u.id]);
+                return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+            }
+            if (Number(limits.user_burst_max) > 0 && Number(limits.user_burst_window_ms) > 0 && Number(limits.user_cooldown_ms) > 0) {
+                const limit = await enforceRateLimit('report', `user:${u.id}`, {
+                    burstWindowMs: Number(limits.user_burst_window_ms),
+                    burstMax: Number(limits.user_burst_max),
+                    cooldownMs: Number(limits.user_cooldown_ms),
+                });
+                if (!limit.allowed) {
+                    return res.status(429).json({ error: 'Too many reports. Please wait.', retry_after_ms: Math.ceil(limit.retryAfterMs) });
+                }
+            }
+        } else {
+            const ip = getClientIp(req);
+            if (Number(limits.guest_min_interval_ms) > 0) {
+                const limit = await enforceRateLimit('report', `ip:${ip}`, {
+                    minIntervalMs: Number(limits.guest_min_interval_ms),
+                });
+                if (!limit.allowed) {
+                    return res.status(429).json({ error: 'Please wait before reporting again.', retry_after_ms: Math.ceil(limit.retryAfterMs) });
+                }
+            }
+        }
         const exists = await pool.query('SELECT id FROM questions WHERE id=$1', [questionId]);
         if (!exists.rows.length) return res.status(404).json({ error: 'Question not found' });
         await runQuery('INSERT INTO question_reports (question_id,reason) VALUES ($1,$2)', [questionId, reason || 'Reported by user']);
-        console.log(`🚩 Question ${questionId} reported by user ${u.id}`);
+        console.log(`🚩 Question ${questionId} reported by ${u ? `user ${u.id}` : 'guest'}`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── LEADERBOARD — excludes anonymous users and admins ──────────────────────────
 app.get('/leaderboard', async (req, res) => {
-    const { categoryId, timeframe } = req.query;
+    const { categoryId, timeframe, includeAnonymous } = req.query;
     const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
     const catId = Number.isNaN(catParsed) ? null : catParsed;
     const now = new Date();
+    const viewer = getTokenUser(req);
+    const includeAnon = includeAnonymous === '1' || includeAnonymous === 'true';
     let start = new Date(0);
     if (timeframe === 'day') {
         start = new Date(now); start.setHours(0, 0, 0, 0);
@@ -888,6 +1222,7 @@ app.get('/leaderboard', async (req, res) => {
         start = new Date(now.getFullYear(), 0, 1);
     }
     try {
+        const privacy = await getPrivacySettings();
         const r = await pool.query(`
             WITH global_reset AS (
                 SELECT MAX(reset_at) AS ts
@@ -912,8 +1247,9 @@ app.get('/leaderboard', async (req, res) => {
                 JOIN users u ON u.id = gs.user_id
                 LEFT JOIN user_reset ur ON ur.user_id = gs.user_id
                 CROSS JOIN global_reset gr
-                WHERE u.is_anonymous = FALSE
-                  AND u.role != 'admin'
+                WHERE u.role != 'admin'
+                  AND (u.blocked_until IS NULL OR u.blocked_until <= NOW())
+                  AND ($3::boolean OR u.is_anonymous = FALSE)
                   AND ($1::int IS NULL OR gs.category_id = $1)
                   AND gs.created_at >= GREATEST(
                         COALESCE(gr.ts, '1970-01-01'),
@@ -925,17 +1261,36 @@ app.get('/leaderboard', async (req, res) => {
             SELECT
                 u.id,
                 u.email,
+                u.display_name,
+                u.show_email,
                 COALESCE(s.score, 0) AS score,
                 COALESCE(s.correct_answered, 0) AS correct_answered,
                 COALESCE(s.total_answered, 0) AS total_answered,
                 u.role
             FROM users u
             LEFT JOIN scores s ON s.user_id = u.id
-            WHERE u.is_anonymous = FALSE AND u.role != 'admin'
+            WHERE ($3::boolean OR u.is_anonymous = FALSE)
+              AND u.role != 'admin'
+              AND (u.blocked_until IS NULL OR u.blocked_until <= NOW())
             ORDER BY score DESC, u.email ASC
             LIMIT 50
-        `, [catId, start]);
-        res.json(r.rows);
+        `, [catId, start, includeAnon]);
+        const isLoggedIn = !!viewer;
+        const rows = r.rows.map((row) => {
+            const displayName = row.display_name || maskEmail(row.email);
+            const canShowEmail = isLoggedIn && !privacy.hide_emails_globally && resolveShowEmail(row.show_email, privacy);
+            return {
+                id: row.id,
+                email: canShowEmail ? row.email : null,
+                gravatar_hash: gravatarHash(row.email),
+                display_name: displayName,
+                score: row.score,
+                correct_answered: row.correct_answered,
+                total_answered: row.total_answered,
+                role: row.role,
+            };
+        });
+        res.json(rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1050,21 +1405,117 @@ app.get('/me/stats', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── PENDING QUESTIONS — requires authentication ────────────────────────────────
-app.post('/pending-questions', async (req, res) => {
+// ── USER: PROFILE / PRIVACY ───────────────────────────────────────────────────
+app.get('/me/profile', async (req, res) => {
     const u = await requireAuth(req, res);
     if (!u) return;
+    try {
+        const r = await pool.query('SELECT email, display_name, show_email FROM users WHERE id=$1', [u.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+        const privacy = await getPrivacySettings();
+        let displayName = r.rows[0].display_name;
+        if (!displayName) {
+            displayName = maskEmail(r.rows[0].email);
+            await runQuery('UPDATE users SET display_name=$1 WHERE id=$2', [displayName, u.id]);
+        }
+        const showEmailResolved = resolveShowEmail(r.rows[0].show_email, privacy);
+        const effectiveShowEmail = !privacy.hide_emails_globally && showEmailResolved;
+        res.json({
+            email: r.rows[0].email,
+            display_name: displayName,
+            show_email: showEmailResolved,
+            effective_show_email: effectiveShowEmail,
+            hide_emails_globally: privacy.hide_emails_globally,
+            hide_emails_by_default: privacy.hide_emails_by_default,
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/me/profile', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    const { displayName, showEmail } = req.body || {};
+    try {
+        const r = await pool.query('SELECT email FROM users WHERE id=$1', [u.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
+        const email = r.rows[0].email;
+        const updates = [];
+        const params = [];
+        if (displayName !== undefined) {
+            let nextName = String(displayName || '').trim();
+            if (!nextName) nextName = maskEmail(email);
+            if (nextName.length > 60) nextName = nextName.slice(0, 60);
+            params.push(nextName);
+            updates.push(`display_name=$${params.length}`);
+        }
+        if (typeof showEmail === 'boolean') {
+            params.push(showEmail);
+            updates.push(`show_email=$${params.length}`);
+        }
+        if (updates.length) {
+            params.push(u.id);
+            await runQuery(`UPDATE users SET ${updates.join(', ')} WHERE id=$${params.length}`, params);
+        }
+        const privacy = await getPrivacySettings();
+        const updated = await pool.query('SELECT email, display_name, show_email FROM users WHERE id=$1', [u.id]);
+        const displayNameFinal = updated.rows[0].display_name || maskEmail(updated.rows[0].email);
+        const showEmailResolved = resolveShowEmail(updated.rows[0].show_email, privacy);
+        const effectiveShowEmail = !privacy.hide_emails_globally && showEmailResolved;
+        res.json({
+            email: updated.rows[0].email,
+            display_name: displayNameFinal,
+            show_email: showEmailResolved,
+            effective_show_email: effectiveShowEmail,
+            hide_emails_globally: privacy.hide_emails_globally,
+            hide_emails_by_default: privacy.hide_emails_by_default,
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── PENDING QUESTIONS — rate-limited for guests and users ─────────────────────
+app.post('/pending-questions', async (req, res) => {
+    const u = getTokenUser(req);
     const { categoryName, text, options, correctAnswer, complexity } = req.body;
     if (!categoryName || !text || !options || !correctAnswer || !complexity)
         return res.status(400).json({ error: 'All fields required' });
     try {
-        const userRow = await pool.query('SELECT email FROM users WHERE id=$1', [u.id]);
-        const email = userRow.rows.length ? userRow.rows[0].email : 'unknown';
+        const limits = await getRateLimitSettings();
+        let email = 'anonymous';
+        let userId = null;
+        if (u) {
+            if (await isUserBlocked(u.id)) {
+                const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [u.id]);
+                return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+            }
+            if (Number(limits.user_burst_max) > 0 && Number(limits.user_burst_window_ms) > 0 && Number(limits.user_cooldown_ms) > 0) {
+                const limit = await enforceRateLimit('suggest', `user:${u.id}`, {
+                    burstWindowMs: Number(limits.user_burst_window_ms),
+                    burstMax: Number(limits.user_burst_max),
+                    cooldownMs: Number(limits.user_cooldown_ms),
+                });
+                if (!limit.allowed) {
+                    return res.status(429).json({ error: 'Too many suggestions. Please wait.', retry_after_ms: Math.ceil(limit.retryAfterMs) });
+                }
+            }
+            const userRow = await pool.query('SELECT email FROM users WHERE id=$1', [u.id]);
+            email = userRow.rows.length ? userRow.rows[0].email : 'unknown';
+            userId = u.id;
+        } else {
+            const ip = getClientIp(req);
+            if (Number(limits.guest_min_interval_ms) > 0) {
+                const limit = await enforceRateLimit('suggest', `ip:${ip}`, {
+                    minIntervalMs: Number(limits.guest_min_interval_ms),
+                });
+                if (!limit.allowed) {
+                    return res.status(429).json({ error: 'Please wait before suggesting again.', retry_after_ms: Math.ceil(limit.retryAfterMs) });
+                }
+            }
+        }
         await runQuery(
             `INSERT INTO pending_questions
              (user_id,submitted_by_email,category_name,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-            [u.id, email, categoryName, text, options.a, options.b, options.c, options.d, correctAnswer, complexity]
+            [userId, email, categoryName, text, options.a, options.b, options.c, options.d, correctAnswer, complexity]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1076,7 +1527,7 @@ app.get('/admin/users', async (req, res) => {
     if (!admin) return;
     try {
         const r = await pool.query(`
-            SELECT u.id, u.email, u.role, u.is_anonymous, u.blocked_until, u.blocked_reason,
+            SELECT u.id, u.email, u.role, u.is_anonymous, u.blocked_until, u.blocked_reason, u.display_name, u.show_email,
                    COALESCE(SUM(gs.points), 0)::int AS score,
                    COUNT(gs.id)::int AS games_played,
                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_answers
@@ -1134,6 +1585,116 @@ app.post('/admin/leaderboard/schedule', async (req, res) => {
         );
         await auditLog(admin.id, 'LEADERBOARD_SCHEDULE_UPDATE', `${period} schedule ${enabled ? 'enabled' : 'disabled'}`);
         res.json({ success: true, nextRun });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: PRIVACY SETTINGS ───────────────────────────────────────────────────
+app.get('/admin/privacy-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getPrivacySettings();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/privacy-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { hide_emails_globally, hide_emails_by_default } = req.body || {};
+    try {
+        const current = await getPrivacySettings();
+        const next = {
+            hide_emails_globally: (typeof hide_emails_globally === 'boolean')
+                ? hide_emails_globally
+                : current.hide_emails_globally,
+            hide_emails_by_default: (typeof hide_emails_by_default === 'boolean')
+                ? hide_emails_by_default
+                : current.hide_emails_by_default,
+        };
+        const r = await pool.query(
+            `INSERT INTO privacy_settings (hide_emails_globally, hide_emails_by_default)
+             VALUES ($1, $2) RETURNING *`,
+            [next.hide_emails_globally, next.hide_emails_by_default]
+        );
+        await auditLog(admin.id, 'PRIVACY_SETTINGS_UPDATE', `global=${next.hide_emails_globally}, default_hide=${next.hide_emails_by_default}`);
+        res.json(r.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: RATE LIMIT SETTINGS ────────────────────────────────────────────────
+app.get('/admin/rate-limit-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getRateLimitSettings();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/rate-limit-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const {
+        guest_min_interval_ms,
+        user_burst_window_ms,
+        user_burst_max,
+        user_cooldown_ms,
+    } = req.body || {};
+    try {
+        const current = await getRateLimitSettings();
+        const next = {
+            guest_min_interval_ms: Number.isFinite(Number(guest_min_interval_ms))
+                ? Math.max(0, Number(guest_min_interval_ms))
+                : current.guest_min_interval_ms,
+            user_burst_window_ms: Number.isFinite(Number(user_burst_window_ms))
+                ? Math.max(0, Number(user_burst_window_ms))
+                : current.user_burst_window_ms,
+            user_burst_max: Number.isFinite(Number(user_burst_max))
+                ? Math.max(0, Number(user_burst_max))
+                : current.user_burst_max,
+            user_cooldown_ms: Number.isFinite(Number(user_cooldown_ms))
+                ? Math.max(0, Number(user_cooldown_ms))
+                : current.user_cooldown_ms,
+        };
+        const r = await pool.query(
+            `INSERT INTO rate_limit_settings (guest_min_interval_ms, user_burst_window_ms, user_burst_max, user_cooldown_ms)
+             VALUES ($1,$2,$3,$4) RETURNING *`,
+            [next.guest_min_interval_ms, next.user_burst_window_ms, next.user_burst_max, next.user_cooldown_ms]
+        );
+        await auditLog(admin.id, 'RATE_LIMIT_SETTINGS_UPDATE', `guest_interval=${next.guest_min_interval_ms} user_window=${next.user_burst_window_ms} user_burst=${next.user_burst_max} user_cooldown=${next.user_cooldown_ms}`);
+        res.json(r.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: IMAGE SETTINGS ─────────────────────────────────────────────────────
+app.get('/admin/image-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getImageSettings();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/image-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { max_image_kb } = req.body || {};
+    try {
+        const current = await getImageSettings();
+        const next = {
+            max_image_kb: Number.isFinite(Number(max_image_kb))
+                ? Math.max(0, Number(max_image_kb))
+                : current.max_image_kb,
+        };
+        const r = await pool.query(
+            `INSERT INTO image_settings (max_image_kb)
+             VALUES ($1) RETURNING *`,
+            [next.max_image_kb]
+        );
+        await auditLog(admin.id, 'IMAGE_SETTINGS_UPDATE', `max_kb=${next.max_image_kb}`);
+        res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1226,12 +1787,12 @@ app.get('/admin/questions/csv', async (req, res) => {
         const r = await pool.query(`
             SELECT q.id, c.name AS category_name, q.text AS question_text,
                    q.option_a, q.option_b, q.option_c, q.option_d,
-                   q.correct_answer, q.complexity, q.disabled
+                   q.correct_answer, q.complexity, q.disabled, q.image_url
             FROM questions q
             JOIN categories c ON c.id = q.category_id
             ORDER BY q.id ASC
         `);
-        const header = ['id','category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled'];
+        const header = ['id','category_name','question_text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'];
         const rows = r.rows.map(row => header.map(h => {
             const v = row[h];
             const s = v === null || v === undefined ? '' : String(v);
@@ -1306,9 +1867,19 @@ app.post('/admin/questions/import-csv', async (req, res) => {
             const catName = obj.category_name || 'General';
             let cat = (await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1)', [catName])).rows[0];
             if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [catName])).rows[0];
+            const normalizedImageUrl = normalizeImageUrl(obj.image_url);
+            if (normalizedImageUrl) {
+                if (!isAllowedImageUrl(normalizedImageUrl)) continue;
+                const imgSettings = await getImageSettings();
+                const maxKb = Number(imgSettings.max_image_kb) || 0;
+                if (maxKb > 0) {
+                    const ok = await checkImageSize(normalizedImageUrl, maxKb);
+                    if (!ok) continue;
+                }
+            }
             await runQuery(
-                `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+                `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
                 [
                     cat.id,
                     obj.question_text,
@@ -1317,7 +1888,8 @@ app.post('/admin/questions/import-csv', async (req, res) => {
                     obj.option_c,
                     obj.option_d,
                     String(obj.correct_answer || 'A').trim().toUpperCase().slice(0,1),
-                    (obj.complexity || 'medium').trim().toLowerCase()
+                    (obj.complexity || 'medium').trim().toLowerCase(),
+                    normalizedImageUrl
                 ]
             );
             inserted++;
@@ -1370,9 +1942,9 @@ app.post('/admin/backup/restore-user', async (req, res) => {
             await client.query('DELETE FROM pending_questions WHERE user_id=$1', [uid]);
             await client.query('DELETE FROM users WHERE id=$1', [uid]);
             await client.query(
-                `INSERT INTO users (id,email,password_hash,role,score,is_anonymous,blocked_until,blocked_reason)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-                [userRow.id, userRow.email, userRow.password_hash, userRow.role, userRow.score, userRow.is_anonymous, userRow.blocked_until, userRow.blocked_reason]
+                `INSERT INTO users (id,email,password_hash,role,score,is_anonymous,blocked_until,blocked_reason,display_name,show_email)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+                [userRow.id, userRow.email, userRow.password_hash, userRow.role, userRow.score, userRow.is_anonymous, userRow.blocked_until, userRow.blocked_reason, userRow.display_name, userRow.show_email]
             );
 
             const restoreRows = async (table, cols, rows) => {

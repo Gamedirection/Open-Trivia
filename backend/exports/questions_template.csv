@@ -1,2 +1,2 @@
-category_name,question_text,option_a,option_b,option_c,option_d,correct_answer,complexity
-Science,What is the chemical symbol for water?,H2O,CO2,NaCl,O2,A,easy
+category_name,question_text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url
+Science,What is the chemical symbol for water?,H2O,CO2,NaCl,O2,A,easy,https://example.com/water.png
