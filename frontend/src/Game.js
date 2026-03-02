@@ -4,6 +4,9 @@ import { cachedGet } from './utils/api';
 import RequestCardModal from './RequestCardModal';
 
 const API_URL = process.env.REACT_APP_API_URL || '/api';
+const OPENTDB_CATEGORY_ID = '__opentdb__';
+const OPENTDB_CATEGORY_NAME = 'OpenTriviaDB';
+const OPENTDB_PREFETCH_AHEAD = 10;
 
 // Retrieve or create an anonymous session ID for guest players
 async function getAnonymousId() {
@@ -36,13 +39,61 @@ export default function Game() {
     const [categories, setCategories] = useState([]);
     const [categorySearch, setCategorySearch] = useState('');
     const [selectedCategoryId, setSelectedCategoryId] = useState('');
+    const [openTdbQueue, setOpenTdbQueue] = useState([]);
+    const [openTdbEnabled, setOpenTdbEnabled] = useState(true);
+    const [skipPerHour, setSkipPerHour] = useState(3);
+    const [skipBusy, setSkipBusy] = useState(false);
+    const openTdbFetchingRef = useRef(false);
 
     const token = localStorage.getItem('token');
     const isLoggedIn = !!token;
+    const isOpenTdbCategory = selectedCategoryId === OPENTDB_CATEGORY_ID;
+
+    const fetchOpenTdbBatch = async (amount) => {
+        const n = Number.isFinite(amount) ? Math.max(1, Math.min(50, amount)) : OPENTDB_PREFETCH_AHEAD;
+        const res = await axios.get(`${API_URL}/game/opentdb/next-batch`, { params: { amount: n } });
+        return Array.isArray(res.data?.questions) ? res.data.questions : [];
+    };
+
+    const refillOpenTdbQueue = async (existingQueue = []) => {
+        if (openTdbFetchingRef.current) return;
+        const missing = OPENTDB_PREFETCH_AHEAD - existingQueue.length;
+        if (missing <= 0) return;
+        openTdbFetchingRef.current = true;
+        try {
+            const fetched = await fetchOpenTdbBatch(missing);
+            if (!fetched.length) return;
+            setOpenTdbQueue(prev => [...prev, ...fetched]);
+        } catch {
+            // Keep gameplay running; user can retry next question.
+        } finally {
+            openTdbFetchingRef.current = false;
+        }
+    };
 
     const fetchQuestion = async () => {
         setLoading(true);
         try {
+            if (isOpenTdbCategory) {
+                let queue = openTdbQueue;
+                if (!queue.length) {
+                    queue = await fetchOpenTdbBatch(OPENTDB_PREFETCH_AHEAD + 1);
+                }
+                const next = queue[0];
+                if (!next) {
+                    setQuestion(null);
+                    return;
+                }
+                const remaining = queue.slice(1);
+                setQuestion(next);
+                setOpenTdbQueue(remaining);
+                setGuessCounts({ A: 25, B: 25, C: 25, D: 25 });
+                setResult(null);
+                setAnswered(null);
+                setReportMessage('');
+                void refillOpenTdbQueue(remaining);
+                return;
+            }
             const params = {};
             if (selectedCategoryId) params.categoryId = selectedCategoryId;
             const res = await axios.get(`${API_URL}/game/next`, { params });
@@ -84,16 +135,41 @@ export default function Game() {
     }, [selectedCategoryId]);
 
     useEffect(() => {
+        const loadGameSettings = async () => {
+            try {
+                const r = await cachedGet(axios, `${API_URL}/game/settings`, {}, 30000);
+                const enabled = r.data?.open_trivia_db_enabled !== false;
+                const skipCount = Number(r.data?.skip_per_hour);
+                setOpenTdbEnabled(enabled);
+                setSkipPerHour(Number.isFinite(skipCount) ? Math.max(0, skipCount) : 0);
+            } catch {
+                // Keep defaults
+            }
+        };
+        loadGameSettings();
+    }, []);
+
+    useEffect(() => {
         const loadCategories = async () => {
             try {
                 const res = await cachedGet(axios, `${API_URL}/categories`, {}, 30000);
-                setCategories(res.data || []);
+                const baseCats = Array.isArray(res.data) ? res.data : [];
+                setCategories(openTdbEnabled
+                    ? [...baseCats, { id: OPENTDB_CATEGORY_ID, name: OPENTDB_CATEGORY_NAME }]
+                    : baseCats
+                );
             } catch {
-                setCategories([]);
+                setCategories(openTdbEnabled ? [{ id: OPENTDB_CATEGORY_ID, name: OPENTDB_CATEGORY_NAME }] : []);
             }
         };
         loadCategories();
-    }, []);
+    }, [openTdbEnabled]);
+
+    useEffect(() => {
+        if (!openTdbEnabled && selectedCategoryId === OPENTDB_CATEGORY_ID) {
+            setSelectedCategoryId('');
+        }
+    }, [openTdbEnabled, selectedCategoryId]);
 
     useEffect(() => {
         if (!question?.id) return;
@@ -121,6 +197,31 @@ export default function Game() {
         });
 
         try {
+            if (isOpenTdbCategory) {
+                const correct = String(question.correctAnswer || '').toUpperCase();
+                const elapsed = startRef.current ? Date.now() - startRef.current : null;
+                const body = {
+                    selectedAnswer: optionChar,
+                    correctAnswer: correct,
+                    elapsedMs: elapsed,
+                    complexity: question.complexity,
+                };
+                let headers = {};
+                if (token) {
+                    headers = { Authorization: `Bearer ${token}` };
+                } else {
+                    const anonId = await getAnonymousId();
+                    if (anonId) body.anonymousId = anonId;
+                }
+                const res = await axios.post(`${API_URL}/game/opentdb/submit`, body, { headers });
+                setResult({
+                    isCorrect: !!res.data?.isCorrect,
+                    correctAnswer: res.data?.correctAnswer || correct || 'A',
+                    pointsAwarded: Number(res.data?.pointsAwarded || 0),
+                });
+                setTimeout(() => fetchQuestion(), 3000);
+                return;
+            }
             const elapsed = startRef.current ? Date.now() - startRef.current : null;
             const body = { questionId: question.id, selectedAnswer: optionChar, elapsedMs: elapsed };
 
@@ -149,6 +250,10 @@ export default function Game() {
 
     const handleReport = async (reasonOverride) => {
         if (!question) return;
+        if (isOpenTdbCategory) {
+            setReportMessage('⚠️ Reporting is only available for local Open-Trivia questions.');
+            return;
+        }
         try {
             const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
             await axios.post(
@@ -184,6 +289,28 @@ export default function Game() {
 
     const handleSuggest = () => {
         setShowRequestModal(true);
+    };
+
+    const handleSkip = async () => {
+        if (!question || answered || result || loading || skipBusy) return;
+        setSkipBusy(true);
+        try {
+            const body = {};
+            if (!token) {
+                const anonId = await getAnonymousId();
+                if (anonId) body.anonymousId = anonId;
+            }
+            await axios.post(`${API_URL}/game/skip`, body, token
+                ? { headers: { Authorization: `Bearer ${token}` } }
+                : undefined
+            );
+            fetchQuestion();
+        } catch (err) {
+            const msg = err.response?.data?.error || 'Skip failed';
+            setReportMessage(`⚠️ ${msg}`);
+        } finally {
+            setSkipBusy(false);
+        }
     };
 
     const getButtonStyle = (optChar) => {
@@ -392,6 +519,21 @@ export default function Game() {
 
             {/* Action buttons */}
             <div style={{ marginTop: '20px', display: 'flex', gap: '10px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button
+                    className="btn"
+                    style={{
+                        backgroundColor: skipPerHour > 0 ? '#17a2b8' : '#6c757d',
+                        color: 'white',
+                        padding: '8px 15px',
+                        cursor: (skipPerHour > 0 && !skipBusy && !answered && !result) ? 'pointer' : 'not-allowed',
+                        opacity: (skipPerHour > 0 && !skipBusy && !answered && !result) ? 1 : 0.65
+                    }}
+                    onClick={handleSkip}
+                    disabled={skipPerHour <= 0 || skipBusy || !!answered || !!result}
+                    title={skipPerHour > 0 ? `Skip is limited to ${skipPerHour} per hour` : 'Skip is disabled by admin'}
+                >
+                    {skipBusy ? '⏭ Skipping...' : '⏭ Skip'}
+                </button>
                 <button
                     className="btn"
                     style={{

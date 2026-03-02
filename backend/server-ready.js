@@ -181,6 +181,40 @@ function parseCsvLines(text) {
     return { header, rows };
 }
 
+function decodeHtmlEntities(input) {
+    const s = String(input || '');
+    return s
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&eacute;/g, 'e')
+        .replace(/&#(\d+);/g, (_m, n) => {
+            const code = parseInt(n, 10);
+            return Number.isFinite(code) ? String.fromCharCode(code) : '';
+        })
+        .replace(/&#x([0-9a-fA-F]+);/g, (_m, h) => {
+            const code = parseInt(h, 16);
+            return Number.isFinite(code) ? String.fromCharCode(code) : '';
+        });
+}
+
+function mapOpenTdbDifficulty(diff) {
+    const d = String(diff || '').toLowerCase();
+    if (d === 'easy' || d === 'medium' || d === 'hard') return d;
+    return 'medium';
+}
+
+function shuffleArray(arr) {
+    const out = [...arr];
+    for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+}
+
 async function uniqueCategoryName(base, existing) {
     let name = String(base || 'Category').trim() || 'Category';
     const lower = (s) => s.toLowerCase();
@@ -579,6 +613,8 @@ async function initDatabase() {
                 user_burst_window_ms INT DEFAULT 300000,
                 user_burst_max INT DEFAULT 3,
                 user_cooldown_ms INT DEFAULT 300000,
+                open_trivia_db_enabled BOOLEAN DEFAULT TRUE,
+                skip_per_hour INT DEFAULT 3,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS image_settings (
@@ -677,8 +713,12 @@ async function initDatabase() {
                 user_burst_window_ms INT DEFAULT 300000,
                 user_burst_max INT DEFAULT 3,
                 user_cooldown_ms INT DEFAULT 300000,
+                open_trivia_db_enabled BOOLEAN DEFAULT TRUE,
+                skip_per_hour INT DEFAULT 3,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `ALTER TABLE rate_limit_settings ADD COLUMN IF NOT EXISTS open_trivia_db_enabled BOOLEAN DEFAULT TRUE`,
+            `ALTER TABLE rate_limit_settings ADD COLUMN IF NOT EXISTS skip_per_hour INT DEFAULT 3`,
             `CREATE TABLE IF NOT EXISTS image_settings (
                 id SERIAL PRIMARY KEY,
                 max_image_kb INT DEFAULT 512,
@@ -836,15 +876,24 @@ async function getPrivacySettings() {
 
 async function getRateLimitSettings() {
     const r = await pool.query('SELECT * FROM rate_limit_settings ORDER BY id DESC LIMIT 1');
-    if (r.rows.length) return r.rows[0];
+    if (r.rows.length) {
+        const row = r.rows[0];
+        return {
+            ...row,
+            open_trivia_db_enabled: row.open_trivia_db_enabled !== false,
+            skip_per_hour: Number.isFinite(Number(row.skip_per_hour)) ? Number(row.skip_per_hour) : 3,
+        };
+    }
     const inserted = await pool.query(`
         INSERT INTO rate_limit_settings (
             guest_min_interval_ms,
             user_burst_window_ms,
             user_burst_max,
-            user_cooldown_ms
+            user_cooldown_ms,
+            open_trivia_db_enabled,
+            skip_per_hour
         )
-        VALUES (300000, 300000, 3, 300000)
+        VALUES (300000, 300000, 3, 300000, TRUE, 3)
         RETURNING *`
     );
     return inserted.rows[0];
@@ -902,7 +951,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         leaderboard_schedules: ['id','period','enabled','next_run','last_run'],
         scoring_settings: ['id','min_points','max_easy','max_med','max_hard','fast_ms','slow_ms','diff_min_attempts','diff_up_threshold','diff_down_threshold','updated_at'],
         privacy_settings: ['id','hide_emails_globally','hide_emails_by_default','updated_at'],
-        rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','updated_at'],
+        rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','open_trivia_db_enabled','skip_per_hour','updated_at'],
         image_settings: ['id','max_image_kb','updated_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
         password_reset_tokens: ['id','user_id','token','expires_at','used','created_at'],
@@ -1204,6 +1253,157 @@ app.delete('/questions/:id', async (req, res) => {
 });
 
 // ── GAME ───────────────────────────────────────────────────────────────────────
+app.get('/game/settings', async (_req, res) => {
+    try {
+        const settings = await getRateLimitSettings();
+        res.json({
+            open_trivia_db_enabled: settings.open_trivia_db_enabled !== false,
+            skip_per_hour: Math.max(0, Number(settings.skip_per_hour) || 0),
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/game/opentdb/next-batch', async (req, res) => {
+    const amountParsed = parseInt(req.query.amount, 10);
+    const amount = Number.isFinite(amountParsed) ? clamp(amountParsed, 1, 50) : 10;
+    try {
+        const settings = await getRateLimitSettings();
+        if (settings.open_trivia_db_enabled === false) {
+            return res.status(403).json({ error: 'OpenTriviaDB is disabled by admin' });
+        }
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), 7000);
+        let r;
+        try {
+            r = await fetch(`https://opentdb.com/api.php?amount=${amount}&type=multiple`, {
+                signal: controller.signal
+            });
+        } finally {
+            clearTimeout(t);
+        }
+        if (!r.ok) return res.status(502).json({ error: `OpenTriviaDB request failed (${r.status})` });
+        const data = await r.json();
+        if (!Array.isArray(data?.results)) return res.status(502).json({ error: 'Invalid OpenTriviaDB response' });
+        const questions = data.results.map((item, idx) => {
+            const correctText = decodeHtmlEntities(item.correct_answer);
+            const incorrect = Array.isArray(item.incorrect_answers)
+                ? item.incorrect_answers.map(v => decodeHtmlEntities(v))
+                : [];
+            const shuffled = shuffleArray([correctText, ...incorrect]).slice(0, 4);
+            const letters = ['A', 'B', 'C', 'D'];
+            const options = shuffled.map((txt, i) => ({ char: letters[i], text: txt }));
+            const correctIdx = shuffled.findIndex(v => v === correctText);
+            const correctAnswer = correctIdx >= 0 ? letters[correctIdx] : 'A';
+            return {
+                id: `opentdb-${Date.now()}-${idx}-${crypto.randomBytes(4).toString('hex')}`,
+                category: decodeHtmlEntities(item.category) || 'OpenTriviaDB',
+                text: decodeHtmlEntities(item.question),
+                options,
+                complexity: mapOpenTdbDifficulty(item.difficulty),
+                image_url: null,
+                correctAnswer,
+                source: 'OpenTriviaDB'
+            };
+        }).filter(q => q.text && q.options.length === 4);
+        res.json({ source: 'OpenTriviaDB', questions });
+    } catch (err) {
+        res.status(502).json({ error: 'Failed to fetch from OpenTriviaDB' });
+    }
+});
+
+app.post('/game/skip', async (req, res) => {
+    const authUser = getTokenUser(req);
+    const { anonymousId } = req.body || {};
+    try {
+        const settings = await getRateLimitSettings();
+        const skipPerHour = Math.max(0, Number(settings.skip_per_hour) || 0);
+        if (skipPerHour <= 0) {
+            return res.status(403).json({ error: 'Skip is disabled by admin' });
+        }
+
+        let rateKey;
+        if (authUser) {
+            if (await isUserBlocked(authUser.id)) {
+                const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [authUser.id]);
+                return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+            }
+            rateKey = `user:${authUser.id}`;
+        } else if (anonymousId) {
+            const anon = await pool.query('SELECT id FROM users WHERE id=$1 AND is_anonymous=TRUE', [anonymousId]);
+            if (anon.rows.length) {
+                rateKey = `anon:${anonymousId}`;
+            } else {
+                rateKey = `ip:${getClientIp(req)}`;
+            }
+        } else {
+            rateKey = `ip:${getClientIp(req)}`;
+        }
+
+        const limit = await enforceRateLimit('skip', rateKey, {
+            burstWindowMs: 60 * 60 * 1000,
+            burstMax: skipPerHour,
+            cooldownMs: 60 * 60 * 1000,
+        });
+        if (!limit.allowed) {
+            return res.status(429).json({
+                error: 'Skip limit reached. Please wait before skipping again.',
+                retry_after_ms: Math.ceil(limit.retryAfterMs || 0),
+            });
+        }
+
+        const usage = await pool.query(
+            'SELECT count, window_start FROM action_limits WHERE action=$1 AND key=$2',
+            ['skip', rateKey]
+        );
+        const countUsed = usage.rows[0] ? Number(usage.rows[0].count) || 0 : 0;
+        const remaining = Math.max(0, skipPerHour - countUsed);
+        const resetAt = usage.rows[0]?.window_start
+            ? new Date(new Date(usage.rows[0].window_start).getTime() + 60 * 60 * 1000)
+            : null;
+
+        res.json({
+            success: true,
+            remaining,
+            reset_at: resetAt ? resetAt.toISOString() : null,
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/game/opentdb/submit', async (req, res) => {
+    const authUser = getTokenUser(req);
+    const { selectedAnswer, correctAnswer, anonymousId, elapsedMs, complexity } = req.body || {};
+    if (!selectedAnswer || !correctAnswer) {
+        return res.status(400).json({ error: 'selectedAnswer and correctAnswer required' });
+    }
+    const selected = String(selectedAnswer).trim().toUpperCase().slice(0, 1);
+    const correct = String(correctAnswer).trim().toUpperCase().slice(0, 1);
+    if (!['A', 'B', 'C', 'D'].includes(selected) || !['A', 'B', 'C', 'D'].includes(correct)) {
+        return res.status(400).json({ error: 'Answers must be A, B, C, or D' });
+    }
+    try {
+        if (authUser && await isUserBlocked(authUser.id)) {
+            const r = await pool.query('SELECT blocked_until FROM users WHERE id=$1', [authUser.id]);
+            return res.status(403).json({ error: 'Account is blocked', blocked_until: r.rows[0]?.blocked_until });
+        }
+        const isCorrect = selected === correct;
+        const scoring = await getScoringSettings();
+        const points = isCorrect ? computePoints(Number(elapsedMs), complexity, scoring) : 0;
+
+        if (points > 0) {
+            if (authUser) {
+                await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, authUser.id]);
+            } else if (anonymousId) {
+                const anonUser = await pool.query('SELECT id FROM users WHERE id=$1 AND is_anonymous=TRUE', [anonymousId]);
+                if (anonUser.rows.length) {
+                    await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, anonUser.rows[0].id]);
+                }
+            }
+        }
+
+        res.json({ isCorrect, correctAnswer: correct, pointsAwarded: points });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/game/next', async (req, res) => {
     const catParsed = req.query.categoryId ? parseInt(req.query.categoryId, 10) : NaN;
     const catId = Number.isNaN(catParsed) ? null : catParsed;
@@ -1778,6 +1978,8 @@ app.post('/admin/rate-limit-settings', async (req, res) => {
         user_burst_window_ms,
         user_burst_max,
         user_cooldown_ms,
+        open_trivia_db_enabled,
+        skip_per_hour,
     } = req.body || {};
     try {
         const current = await getRateLimitSettings();
@@ -1794,13 +1996,33 @@ app.post('/admin/rate-limit-settings', async (req, res) => {
             user_cooldown_ms: Number.isFinite(Number(user_cooldown_ms))
                 ? Math.max(0, Number(user_cooldown_ms))
                 : current.user_cooldown_ms,
+            open_trivia_db_enabled: (typeof open_trivia_db_enabled === 'boolean')
+                ? open_trivia_db_enabled
+                : (current.open_trivia_db_enabled !== false),
+            skip_per_hour: Number.isFinite(Number(skip_per_hour))
+                ? Math.max(0, Number(skip_per_hour))
+                : (Number(current.skip_per_hour) || 0),
         };
         const r = await pool.query(
-            `INSERT INTO rate_limit_settings (guest_min_interval_ms, user_burst_window_ms, user_burst_max, user_cooldown_ms)
-             VALUES ($1,$2,$3,$4) RETURNING *`,
-            [next.guest_min_interval_ms, next.user_burst_window_ms, next.user_burst_max, next.user_cooldown_ms]
+            `INSERT INTO rate_limit_settings (
+                guest_min_interval_ms, user_burst_window_ms, user_burst_max, user_cooldown_ms,
+                open_trivia_db_enabled, skip_per_hour
+             )
+             VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+            [
+                next.guest_min_interval_ms,
+                next.user_burst_window_ms,
+                next.user_burst_max,
+                next.user_cooldown_ms,
+                next.open_trivia_db_enabled,
+                next.skip_per_hour,
+            ]
         );
-        await auditLog(admin.id, 'RATE_LIMIT_SETTINGS_UPDATE', `guest_interval=${next.guest_min_interval_ms} user_window=${next.user_burst_window_ms} user_burst=${next.user_burst_max} user_cooldown=${next.user_cooldown_ms}`);
+        await auditLog(
+            admin.id,
+            'RATE_LIMIT_SETTINGS_UPDATE',
+            `guest_interval=${next.guest_min_interval_ms} user_window=${next.user_burst_window_ms} user_burst=${next.user_burst_max} user_cooldown=${next.user_cooldown_ms} opentdb=${next.open_trivia_db_enabled} skip_per_hour=${next.skip_per_hour}`
+        );
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

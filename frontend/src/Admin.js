@@ -565,6 +565,8 @@ export default function Admin() {
                 user_burst_window_ms: Number(rateLimits.user_burst_window_ms),
                 user_burst_max: Number(rateLimits.user_burst_max),
                 user_cooldown_ms: Number(rateLimits.user_cooldown_ms),
+                open_trivia_db_enabled: !!rateLimits.open_trivia_db_enabled,
+                skip_per_hour: Number(rateLimits.skip_per_hour),
             }, authCfg());
             setRateLimits(r.data);
             flash('✅ Rate limit settings saved');
@@ -1513,6 +1515,32 @@ export default function Admin() {
                                             onChange={e => setRateLimits({ ...rateLimits, user_cooldown_ms: e.target.value })}
                                             style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                         />
+                                    </div>
+                                </div>
+                                <div style={{ borderTop: '1px dashed var(--border-color)', paddingTop: '10px', marginTop: '4px' }}>
+                                    <h5 style={{ margin: '0 0 8px 0' }}>Gameplay Controls</h5>
+                                    <div style={{ display: 'grid', gap: '10px' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                                            <input
+                                                type="checkbox"
+                                                checked={rateLimits.open_trivia_db_enabled !== false}
+                                                onChange={e => setRateLimits({ ...rateLimits, open_trivia_db_enabled: e.target.checked })}
+                                            />
+                                            Enable OpenTriviaDB category in the game
+                                        </label>
+                                        <div>
+                                            <label style={{ fontSize: '12px', color: '#888' }}>Skips Per Hour (per user/session)</label>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                value={rateLimits.skip_per_hour ?? 3}
+                                                onChange={e => setRateLimits({ ...rateLimits, skip_per_hour: e.target.value })}
+                                                style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                            />
+                                            <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                                Set to 0 to disable skip.
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', gap: '10px' }}>
