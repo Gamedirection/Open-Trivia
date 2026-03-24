@@ -281,6 +281,8 @@ export default function Admin() {
     const [backupLoading, setBackupLoading] = useState(false);
     const [discordSso, setDiscordSso] = useState(null);
     const [discordSsoSaving, setDiscordSsoSaving] = useState(false);
+    const [discordBot, setDiscordBot] = useState(null);
+    const [discordBotSaving, setDiscordBotSaving] = useState(false);
 
     const flash = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 3500); }, []);
 
@@ -356,6 +358,13 @@ export default function Admin() {
         } catch { flash('❌ Failed to load Discord SSO settings'); }
     }, []);
 
+    const loadDiscordBotSettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/discord-bot-settings`, authCfg());
+            setDiscordBot(r.data);
+        } catch { flash('❌ Failed to load Discord bot settings'); }
+    }, []);
+
     const loadScoringSettings = useCallback(async () => {
         try {
             const r = await axios.get(`${API_URL}/admin/scoring-settings`, authCfg());
@@ -396,6 +405,7 @@ export default function Admin() {
     useEffect(() => { if (tab === 'leaderboard') loadImageSettings(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadDiscordSsoSettings(); }, [tab]);
+    useEffect(() => { if (tab === 'data') loadDiscordBotSettings(); }, [tab]);
 
     // ── Category actions ───────────────────────────────────────────────────────
     const addCategory = async () => {
@@ -626,6 +636,22 @@ export default function Admin() {
             flash(r.data.active ? '✅ Discord SSO saved and active' : '✅ Discord SSO settings saved');
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
         finally { setDiscordSsoSaving(false); }
+    };
+
+    const saveDiscordBotSettings = async () => {
+        if (!discordBot) return;
+        setDiscordBotSaving(true);
+        try {
+            const r = await axios.post(`${API_URL}/admin/discord-bot-settings`, {
+                enabled: !!discordBot.enabled,
+                api_token: discordBot.api_token || '',
+                public_app_url: discordBot.public_app_url || '',
+                service_url: discordBot.service_url || '',
+            }, authCfg());
+            setDiscordBot(r.data);
+            flash(r.data.active ? '✅ Discord bot settings saved and active' : '✅ Discord bot settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setDiscordBotSaving(false); }
     };
 
     const exportData = async () => {
@@ -1351,6 +1377,98 @@ export default function Admin() {
                                         <div>4. Save the Client ID, Client Secret, and redirect URI here.</div>
                                         <div>5. Turn on “Enable Discord login button and OAuth flow” and save again.</div>
                                         <div>6. Test sign-in from the public login modal. Discord must return a verified email address.</div>
+                                    </div>
+                                </details>
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ ...cardStyle, marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+                            <h4 style={{ margin: 0 }}>Discord Bot</h4>
+                            {discordBot?.active ? (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#155724', backgroundColor: '#d4edda', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Active
+                                </span>
+                            ) : discordBot?.configured ? (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#856404', backgroundColor: '#fff3cd', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Configured but disabled
+                                </span>
+                            ) : (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#721c24', backgroundColor: '#f8d7da', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Not configured
+                                </span>
+                            )}
+                        </div>
+                        {!discordBot ? (
+                            <p style={{ color: '#888' }}>Loading Discord bot settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!discordBot.enabled}
+                                        onChange={e => setDiscordBot({ ...discordBot, enabled: e.target.checked })}
+                                    />
+                                    Enable Discord bot integration APIs
+                                </label>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Bot API Token</label>
+                                        <input
+                                            type="password"
+                                            value={discordBot.api_token || ''}
+                                            onChange={e => setDiscordBot({ ...discordBot, api_token: e.target.value })}
+                                            placeholder="Shared secret used by the bot service"
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Bot Service URL</label>
+                                        <input
+                                            value={discordBot.service_url || ''}
+                                            onChange={e => setDiscordBot({ ...discordBot, service_url: e.target.value })}
+                                            placeholder="http://discord-bot:3002"
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ fontSize: '12px', color: '#888' }}>Public App URL</label>
+                                    <input
+                                        value={discordBot.public_app_url || ''}
+                                        onChange={e => setDiscordBot({ ...discordBot, public_app_url: e.target.value })}
+                                        placeholder="http://localhost:3000"
+                                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                    />
+                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                        Used for account-link prompts and Discord deep links back to Open-Trivia.
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                    <button className="btn btn-primary" onClick={saveDiscordBotSettings} disabled={discordBotSaving}>
+                                        {discordBotSaving ? 'Saving...' : 'Save Discord Bot Settings'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadDiscordBotSettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload
+                                    </button>
+                                </div>
+
+                                <details style={{ marginTop: '4px' }}>
+                                    <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Bot Setup Instructions</summary>
+                                    <div style={{ marginTop: '10px', fontSize: '13px', color: '#555', display: 'grid', gap: '8px' }}>
+                                        <div>1. Invite the Discord bot application to your server with message, slash-command, and button permissions.</div>
+                                        <div>2. Set the same Bot API token here and in the bot service environment.</div>
+                                        <div>3. Set the Public App URL to your Open-Trivia site so the bot can send account-link prompts.</div>
+                                        <div>4. Enable Discord bot integration here, then start the bot service from the `services/open-trivia-discord` submodule.</div>
+                                        <div>5. Use `/ot` for immediate questions, talk directly to the bot for solo play, and `/otschedule` to configure recurring trivia in a channel.</div>
                                     </div>
                                 </details>
                             </div>

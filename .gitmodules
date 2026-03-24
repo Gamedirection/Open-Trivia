@@ -1,3 +1,6 @@
 [submodule "Open-Trivia-Questions"]
 	path = docs/Open-Trivia-Questions
 	url = https://github.com/Gamedirection/Open-Trivia-Questions.git
+[submodule "services/open-trivia-discord"]
+	path = services/open-trivia-discord
+	url = https://github.com/Gamedirection/open-trivia-discord.git

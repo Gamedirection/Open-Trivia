@@ -9,6 +9,8 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 
 ## Key Features
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
+- Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
+- Question answers now collapse blank slots automatically so True/False style questions render as two full-width answers instead of four sparse buttons.
 - Leaderboards with category and timeframe filters (day/month/year).
 - Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries, Discord avatars with Gravatar fallback.
 - Timer-based scoring with configurable min/max points.
@@ -25,6 +27,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 ## Architecture
 - Frontend: React SPA.
 - Backend: Node/Express + PostgreSQL.
+- Discord bot: separate Node service in `services/open-trivia-discord`.
 - Images: GHCR.
 
 ## Quickstart (Docker Compose)
@@ -53,6 +56,20 @@ DISCORD_REDIRECT_URI=http://localhost:3000/api/auth/discord/callback
 
 Set the Discord application redirect URI to the same callback URL you configure above. You can also manage these values later from the admin panel Data section, where admins can enable/disable Discord login and view the embedded setup instructions dropdown.
 
+### Discord Bot (optional)
+```bash
+DISCORD_BOT_API_TOKEN=change-me-bot-token
+PUBLIC_APP_URL=http://localhost:3000
+DISCORD_BOT_SERVICE_URL=http://discord-bot:3000
+BOT_DISCORD_TOKEN=your-discord-bot-token
+BOT_DISCORD_CLIENT_ID=your-discord-bot-client-id
+BOT_SCHEDULE_POLL_MS=15000
+BOT_QUESTION_TIMEOUT_SECONDS=60
+```
+
+The bot lives in `services/open-trivia-discord` as a submodule. Configure the bot token/client ID in `.env`, start the `discord-bot` service, then use `/ot`, `/leaderboard`, and `/otschedule` in Discord.
+The bot also supports `/categories` and `/help`, and scheduler commands can target an optional category plus a selected Discord channel.
+
 ### Scoring Config (optional)
 ```bash
 SCORE_MIN_POINTS=5
@@ -73,7 +90,7 @@ DIFF_DOWN_THRESHOLD=0.8
 - Image size limits for question images.
 - Admin image uploads for questions.
 - Category pack export/import (zip, GitHub, or release asset URL) + template download.
-- Data section: backups/export/import plus Discord SSO configuration and setup guidance.
+- Data section: backups/export/import plus Discord SSO and Discord bot configuration with setup guidance.
 
 ## Shared Collections
 Community packs can be browsed at `questions.trivia.gamedirection.net`.  

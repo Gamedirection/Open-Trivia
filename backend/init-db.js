@@ -155,6 +155,62 @@ async function initDB() {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS discord_bot_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                api_token TEXT,
+                public_app_url TEXT,
+                service_url TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_trivia_schedules (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64) NOT NULL,
+                channel_id VARCHAR(64) NOT NULL,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                question_count INT DEFAULT 1,
+                schedule_kind VARCHAR(20) NOT NULL,
+                interval_minutes INT,
+                daily_time VARCHAR(5),
+                enabled BOOLEAN DEFAULT TRUE,
+                next_run TIMESTAMP,
+                last_run TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_trivia_sessions (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                message_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                mode VARCHAR(20) NOT NULL,
+                prompt_user_discord_id VARCHAR(64),
+                close_after_seconds INT DEFAULT 45,
+                closes_at TIMESTAMP,
+                closed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_trivia_answers (
+                id SERIAL PRIMARY KEY,
+                session_id INT REFERENCES discord_trivia_sessions(id) ON DELETE CASCADE,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                discord_user_id VARCHAR(64) NOT NULL,
+                discord_username VARCHAR(255),
+                user_id INT REFERENCES users(id) ON DELETE SET NULL,
+                selected_answer CHAR(1) NOT NULL,
+                is_correct BOOLEAN DEFAULT FALSE,
+                points_awarded INT DEFAULT 0,
+                answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (session_id, discord_user_id)
+            );
+
             CREATE TABLE IF NOT EXISTS audit_logs (
                 id SERIAL PRIMARY KEY,
                 admin_id INT REFERENCES users(id),

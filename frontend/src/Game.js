@@ -45,6 +45,19 @@ export default function Game() {
     const [skipBusy, setSkipBusy] = useState(false);
     const openTdbFetchingRef = useRef(false);
 
+    const makeGuessCounts = (options = []) => {
+        const visibleOptions = Array.isArray(options)
+            ? options.filter((opt) => String(opt?.text || '').trim())
+            : [];
+        if (!visibleOptions.length) return {};
+        const base = Math.floor(100 / visibleOptions.length);
+        const remainder = 100 - (base * visibleOptions.length);
+        return visibleOptions.reduce((acc, opt, index) => {
+            acc[opt.char] = base + (index < remainder ? 1 : 0);
+            return acc;
+        }, {});
+    };
+
     const token = localStorage.getItem('token');
     const isLoggedIn = !!token;
     const isOpenTdbCategory = selectedCategoryId === OPENTDB_CATEGORY_ID;
@@ -87,7 +100,7 @@ export default function Game() {
                 const remaining = queue.slice(1);
                 setQuestion(next);
                 setOpenTdbQueue(remaining);
-                setGuessCounts({ A: 25, B: 25, C: 25, D: 25 });
+                setGuessCounts(makeGuessCounts(next.options));
                 setResult(null);
                 setAnswered(null);
                 setReportMessage('');
@@ -102,7 +115,7 @@ export default function Game() {
                 return;
             }
             setQuestion(res.data);
-            setGuessCounts({ A: 25, B: 25, C: 25, D: 25 });
+            setGuessCounts(makeGuessCounts(res.data.options));
             setResult(null);
             setAnswered(null);
             setReportMessage('');
@@ -364,6 +377,10 @@ export default function Game() {
     }
 
     const complexityColors = { easy: '#28a745', medium: '#ffc107', hard: '#dc3545' };
+    const visibleOptions = Array.isArray(question?.options)
+        ? question.options.filter((opt) => String(opt?.text || '').trim())
+        : [];
+    const answerColumns = visibleOptions.length <= 1 ? '1fr' : visibleOptions.length === 2 ? '1fr 1fr' : '1fr 1fr';
     const filteredCategories = categories.filter(c =>
         c.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
     );
@@ -461,7 +478,7 @@ export default function Game() {
             <div style={{ marginBottom: '20px', borderTop: '1px dashed var(--border-color)', paddingTop: '10px' }}>
                 <small style={{ color: 'var(--text-color)', opacity: 0.7 }}>Community Guess Ratios</small>
                 <div style={{ display: 'flex', gap: '10px', marginTop: '8px' }}>
-                    {question.options.map(opt => {
+                    {visibleOptions.map(opt => {
                         const pct = guessCounts[opt.char] || 25;
                         return (
                             <div key={opt.char} style={{ flex: 1 }}>
@@ -488,8 +505,8 @@ export default function Game() {
             </div>
 
             {/* Answer buttons */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                {question.options.map((opt) => (
+            <div style={{ display: 'grid', gridTemplateColumns: answerColumns, gap: '10px' }}>
+                {visibleOptions.map((opt) => (
                     <button
                         key={opt.char}
                         className="btn"

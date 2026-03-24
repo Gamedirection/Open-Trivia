@@ -1,10 +1,19 @@
 # Changelog / Roadmap
 
+## v0.3.4
+- Added the Discord Bot admin settings card and bot settings APIs to the deployed backend/frontend flow, including enable/disable, bot token, service URL, and public app URL controls.
+- Added refreshed backend/frontend GHCR images so production deployments can pick up the Discord bot admin configuration UI.
+- Trimmed blank answer slots from question payloads so web gameplay and bot sessions only show real answers.
+- Updated the web game answer grid to rebalance layouts for two-answer questions such as True/False.
+- Expanded the Discord bot command set with `/categories` and `/help`, plus scheduler channel targeting and richer slash-command handling.
+
 ## v0.3.3
 - Added Discord SSO with OAuth login, verified-email account linking, and callback handling for both `/api/auth/discord/callback` and `/auth/discord/callback`.
 - Added admin-managed Discord SSO settings in the Data tab, including an in-app setup guide and runtime enable/disable controls.
 - Added Discord avatar support across the signed-in header, admin users list, and leaderboard, with Gravatar fallback preserved.
 - Added persisted `discord_sso_settings` storage and Discord profile fields on users for avatar and account-link metadata.
+- Added the `services/open-trivia-discord` submodule and initial Discord bot service with `/ot`, `/leaderboard`, `/otschedule`, DM play, public button-based play, and recurring trivia schedules.
+- Added Discord bot backend APIs, bot settings in the admin Data tab, and server-scoped Discord leaderboard tracking.
 
 ## v0.3.2
 - Added optional branded logo support via Docker Compose and Helm (fallback to default icon).

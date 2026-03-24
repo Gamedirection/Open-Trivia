@@ -63,6 +63,9 @@ services:
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
       - DISCORD_REDIRECT_URI=${DISCORD_REDIRECT_URI}
+      - DISCORD_BOT_API_TOKEN=${DISCORD_BOT_API_TOKEN}
+      - PUBLIC_APP_URL=${PUBLIC_APP_URL}
+      - DISCORD_BOT_SERVICE_URL=${DISCORD_BOT_SERVICE_URL}
      # ── Common provider examples (uncomment and fill in one block) ────────────
 
       # Gmail (use an App Password, not your account password):
@@ -109,6 +112,20 @@ services:
 
     depends_on:
       - db
+
+  discord-bot:
+    build: ./services/open-trivia-discord
+    depends_on:
+      - backend
+    environment:
+      - DISCORD_TOKEN=${BOT_DISCORD_TOKEN}
+      - DISCORD_CLIENT_ID=${BOT_DISCORD_CLIENT_ID}
+      - BOT_API_BASE_URL=http://backend:5000
+      - BOT_API_TOKEN=${DISCORD_BOT_API_TOKEN}
+      - BOT_PUBLIC_APP_URL=${PUBLIC_APP_URL:-http://localhost:3000}
+      - BOT_STORAGE_PATH=/tmp/open-trivia-discord-state.json
+      - BOT_SCHEDULE_POLL_MS=${BOT_SCHEDULE_POLL_MS:-15000}
+      - BOT_QUESTION_TIMEOUT_SECONDS=${BOT_QUESTION_TIMEOUT_SECONDS:-60}
 
   #swaggerui:
   #  image: swaggerapi/swagger-ui:latest

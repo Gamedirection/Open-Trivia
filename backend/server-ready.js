@@ -41,16 +41,35 @@ function base64UrlEncode(value) {
     return Buffer.from(String(value), 'utf8').toString('base64url');
 }
 
+function normalizeExternalBaseUrl(url, fallback = 'http://localhost:3000') {
+    const trimmed = String(url || '').trim();
+    const source = trimmed || fallback;
+    if (/^https?:\/\//i.test(source)) {
+        return source.replace(/\/+$/, '');
+    }
+    return `https://${source.replace(/^\/+/, '').replace(/\/+$/, '')}`;
+}
+
 function buildAppUrl(pathname = '/') {
-    const base = String(process.env.APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+    const base = normalizeExternalBaseUrl(process.env.APP_URL || 'http://localhost:3000');
     const nextPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
     return `${base}${nextPath}`;
 }
 
 function resolveDiscordRedirectUri(redirectUri) {
     const explicit = String(redirectUri || '').trim();
-    if (explicit) return explicit;
+    if (explicit) return normalizeExternalBaseUrl(explicit);
     return buildAppUrl('/api/auth/discord/callback');
+}
+
+function normalizeBotBaseUrl(url) {
+    return normalizeExternalBaseUrl(url, 'http://localhost:3000');
+}
+
+function buildPublicAppUrl(pathname = '/') {
+    const explicit = normalizeBotBaseUrl(process.env.PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000');
+    const nextPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return `${explicit}${nextPath}`;
 }
 
 function signAuthToken(user) {
@@ -83,6 +102,11 @@ function buildDiscordState(targetPath = '/') {
         process.env.JWT_SECRET,
         { expiresIn: '10m' }
     );
+}
+
+function buildDiscordLinkUrl(targetPath = '/') {
+    const target = targetPath.startsWith('/') ? targetPath : `/${targetPath}`;
+    return buildPublicAppUrl(`/api/auth/discord/start?target=${encodeURIComponent(target)}`);
 }
 
 function verifyDiscordState(state) {
@@ -209,6 +233,15 @@ function normalizeImageUrl(url) {
     const trimmed = String(url || '').trim();
     if (!trimmed) return null;
     return trimmed;
+}
+
+function compactQuestionOptions(options) {
+    return (Array.isArray(options) ? options : [])
+        .map((option) => ({
+            char: String(option?.char || '').trim().toUpperCase(),
+            text: String(option?.text || '').trim(),
+        }))
+        .filter((option) => option.char && option.text);
 }
 
 function isAllowedImageUrl(url) {
@@ -652,6 +685,43 @@ function requireAdmin(req, res) {
     return u;
 }
 
+async function getDiscordBotSettings() {
+    const envSettings = {
+        enabled: false,
+        api_token: String(process.env.DISCORD_BOT_API_TOKEN || '').trim(),
+        public_app_url: normalizeBotBaseUrl(process.env.PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000'),
+        service_url: normalizeBotBaseUrl(process.env.DISCORD_BOT_SERVICE_URL || ''),
+    };
+    const r = await pool.query('SELECT * FROM discord_bot_settings ORDER BY id DESC LIMIT 1');
+    const row = r.rows[0] || {};
+    const merged = {
+        enabled: row.enabled ?? envSettings.enabled,
+        api_token: String(row.api_token || envSettings.api_token || '').trim(),
+        public_app_url: normalizeBotBaseUrl(row.public_app_url || envSettings.public_app_url),
+        service_url: normalizeBotBaseUrl(row.service_url || envSettings.service_url),
+        updated_at: row.updated_at || null,
+    };
+    merged.configured = !!merged.api_token;
+    merged.active = !!(merged.enabled && merged.configured);
+    return merged;
+}
+
+async function requireBot(req, res) {
+    try {
+        const settings = await getDiscordBotSettings();
+        const auth = String(req.headers['authorization'] || '');
+        const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+        if (!settings.active || !token || token !== settings.api_token) {
+            res.status(401).json({ error: 'Bot authentication required' });
+            return null;
+        }
+        return settings;
+    } catch {
+        res.status(500).json({ error: 'Bot auth check failed' });
+        return null;
+    }
+}
+
 // ── Audit log helper ───────────────────────────────────────────────────────────
 async function auditLog(adminId, action, details = '') {
     try {
@@ -795,6 +865,58 @@ async function initDatabase() {
                 redirect_uri TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS discord_bot_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                api_token TEXT,
+                public_app_url TEXT,
+                service_url TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS discord_trivia_schedules (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64) NOT NULL,
+                channel_id VARCHAR(64) NOT NULL,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                question_count INT DEFAULT 1,
+                schedule_kind VARCHAR(20) NOT NULL,
+                interval_minutes INT,
+                daily_time VARCHAR(5),
+                enabled BOOLEAN DEFAULT TRUE,
+                next_run TIMESTAMP,
+                last_run TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS discord_trivia_sessions (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                message_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                mode VARCHAR(20) NOT NULL,
+                prompt_user_discord_id VARCHAR(64),
+                close_after_seconds INT DEFAULT 45,
+                closes_at TIMESTAMP,
+                closed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS discord_trivia_answers (
+                id SERIAL PRIMARY KEY,
+                session_id INT REFERENCES discord_trivia_sessions(id) ON DELETE CASCADE,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                discord_user_id VARCHAR(64) NOT NULL,
+                discord_username VARCHAR(255),
+                user_id INT REFERENCES users(id) ON DELETE SET NULL,
+                selected_answer CHAR(1) NOT NULL,
+                is_correct BOOLEAN DEFAULT FALSE,
+                points_awarded INT DEFAULT 0,
+                answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (session_id, discord_user_id)
+            );
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id) ON DELETE CASCADE,
@@ -909,6 +1031,60 @@ async function initDatabase() {
                 redirect_uri TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `CREATE TABLE IF NOT EXISTS discord_bot_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                api_token TEXT,
+                public_app_url TEXT,
+                service_url TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS discord_trivia_schedules (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64) NOT NULL,
+                channel_id VARCHAR(64) NOT NULL,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                question_count INT DEFAULT 1,
+                schedule_kind VARCHAR(20) NOT NULL,
+                interval_minutes INT,
+                daily_time VARCHAR(5),
+                enabled BOOLEAN DEFAULT TRUE,
+                next_run TIMESTAMP,
+                last_run TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS discord_trivia_sessions (
+                id SERIAL PRIMARY KEY,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                message_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                mode VARCHAR(20) NOT NULL,
+                prompt_user_discord_id VARCHAR(64),
+                close_after_seconds INT DEFAULT 45,
+                closes_at TIMESTAMP,
+                closed_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS discord_trivia_answers (
+                id SERIAL PRIMARY KEY,
+                session_id INT REFERENCES discord_trivia_sessions(id) ON DELETE CASCADE,
+                guild_id VARCHAR(64),
+                channel_id VARCHAR(64),
+                question_id INT REFERENCES questions(id) ON DELETE CASCADE,
+                category_id INT REFERENCES categories(id) ON DELETE SET NULL,
+                discord_user_id VARCHAR(64) NOT NULL,
+                discord_username VARCHAR(255),
+                user_id INT REFERENCES users(id) ON DELETE SET NULL,
+                selected_answer CHAR(1) NOT NULL,
+                is_correct BOOLEAN DEFAULT FALSE,
+                points_awarded INT DEFAULT 0,
+                answered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (session_id, discord_user_id)
+            )`,
+            `CREATE INDEX IF NOT EXISTS idx_discord_answers_guild_time ON discord_trivia_answers(guild_id, answered_at)`,
+            `CREATE INDEX IF NOT EXISTS idx_discord_schedules_next_run ON discord_trivia_schedules(enabled, next_run)`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_min_attempts INT DEFAULT 25`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_up_threshold NUMERIC DEFAULT 0.4`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_down_threshold NUMERIC DEFAULT 0.8`,
@@ -1122,6 +1298,38 @@ async function getDiscordSsoSettings() {
     return merged;
 }
 
+async function getDiscordBotSettingsSnapshot() {
+    const settings = await getDiscordBotSettings();
+    return {
+        enabled: settings.enabled,
+        api_token: settings.api_token,
+        public_app_url: settings.public_app_url,
+        service_url: settings.service_url,
+        updated_at: settings.updated_at,
+        configured: settings.configured,
+        active: settings.active,
+    };
+}
+
+function computeDiscordScheduleNextRun(schedule, fromDate = new Date()) {
+    const kind = String(schedule?.schedule_kind || '').toLowerCase();
+    const from = new Date(fromDate);
+    if (kind === 'interval') {
+        const mins = Math.max(1, Number(schedule?.interval_minutes) || 0);
+        return new Date(from.getTime() + mins * 60 * 1000);
+    }
+    if (kind === 'daily') {
+        const daily = String(schedule?.daily_time || '09:00');
+        const [hh, mm] = daily.split(':').map(v => parseInt(v, 10));
+        const next = new Date(from);
+        next.setSeconds(0, 0);
+        next.setHours(Number.isFinite(hh) ? hh : 9, Number.isFinite(mm) ? mm : 0, 0, 0);
+        if (next <= from) next.setDate(next.getDate() + 1);
+        return next;
+    }
+    return null;
+}
+
 async function collectSnapshot() {
     const tables = [
         'users',
@@ -1137,6 +1345,10 @@ async function collectSnapshot() {
         'rate_limit_settings',
         'image_settings',
         'discord_sso_settings',
+        'discord_bot_settings',
+        'discord_trivia_schedules',
+        'discord_trivia_sessions',
+        'discord_trivia_answers',
         'audit_logs',
         'password_reset_tokens',
     ];
@@ -1167,6 +1379,10 @@ async function applySnapshot(snapshot, mode = 'replace') {
         rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','open_trivia_db_enabled','skip_per_hour','updated_at'],
         image_settings: ['id','max_image_kb','updated_at'],
         discord_sso_settings: ['id','enabled','client_id','client_secret','redirect_uri','updated_at'],
+        discord_bot_settings: ['id','enabled','api_token','public_app_url','service_url','updated_at'],
+        discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','daily_time','enabled','next_run','last_run','created_at'],
+        discord_trivia_sessions: ['id','guild_id','channel_id','message_id','question_id','category_id','mode','prompt_user_discord_id','close_after_seconds','closes_at','closed_at','created_at'],
+        discord_trivia_answers: ['id','session_id','guild_id','channel_id','question_id','category_id','discord_user_id','discord_username','user_id','selected_answer','is_correct','points_awarded','answered_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
         password_reset_tokens: ['id','user_id','token','expires_at','used','created_at'],
     };
@@ -1175,7 +1391,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
     try {
         await client.query('BEGIN');
         if (mode === 'replace') {
-            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, privacy_settings, rate_limit_settings, image_settings, discord_sso_settings, questions, categories, users RESTART IDENTITY CASCADE');
+            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, discord_trivia_answers, discord_trivia_sessions, discord_trivia_schedules, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, privacy_settings, rate_limit_settings, image_settings, discord_sso_settings, discord_bot_settings, questions, categories, users RESTART IDENTITY CASCADE');
         }
 
         for (const [table, cols] of Object.entries(tables)) {
@@ -1211,6 +1427,10 @@ async function applySnapshot(snapshot, mode = 'replace') {
             'rate_limit_settings_id_seq',
             'image_settings_id_seq',
             'discord_sso_settings_id_seq',
+            'discord_bot_settings_id_seq',
+            'discord_trivia_schedules_id_seq',
+            'discord_trivia_sessions_id_seq',
+            'discord_trivia_answers_id_seq',
             'audit_logs_id_seq',
             'password_reset_tokens_id_seq',
             'backup_snapshots_id_seq',
@@ -1702,10 +1922,10 @@ app.get('/game/next', async (req, res) => {
         );
         const q = qr.rows[0];
         const cat = await pool.query('SELECT name FROM categories WHERE id=$1', [q.category_id]);
-        const options = [
+        const options = compactQuestionOptions([
             { char: 'A', text: q.option_a }, { char: 'B', text: q.option_b },
             { char: 'C', text: q.option_c }, { char: 'D', text: q.option_d }
-        ];
+        ]);
         for (let i = options.length - 1; i > 0; i--) {
             const j = Math.floor(Math.random() * (i + 1));
             [options[i], options[j]] = [options[j], options[i]];
@@ -1907,6 +2127,439 @@ app.get('/leaderboard', async (req, res) => {
             };
         });
         res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── DISCORD BOT INTEGRATION ──────────────────────────────────────────────────
+app.get('/bot/config', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    try {
+        const settings = await getDiscordBotSettingsSnapshot();
+        res.json({
+            public_app_url: settings.public_app_url,
+            service_url: settings.service_url,
+            discord_link_url: buildDiscordLinkUrl('/'),
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/bot/categories', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    try {
+        const r = await pool.query('SELECT id, name FROM categories ORDER BY name ASC');
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/bot/schedules', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    try {
+        const guildId = String(req.query.guildId || '').trim();
+        const dueOnly = String(req.query.dueOnly || '').trim() === '1';
+        const params = [];
+        let where = 'WHERE 1=1';
+        if (guildId) {
+            params.push(guildId);
+            where += ` AND guild_id=$${params.length}`;
+        }
+        if (dueOnly) {
+            where += ' AND enabled=TRUE AND next_run IS NOT NULL AND next_run <= NOW()';
+        }
+        const r = await pool.query(
+            `SELECT s.*, c.name AS category_name
+             FROM discord_trivia_schedules s
+             LEFT JOIN categories c ON c.id = s.category_id
+             ${where}
+             ORDER BY s.guild_id ASC, s.channel_id ASC, s.id ASC`,
+            params
+        );
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/schedules', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const body = req.body || {};
+    const guildId = String(body.guildId || '').trim();
+    const channelId = String(body.channelId || '').trim();
+    let categoryId = body.categoryId ? parseInt(body.categoryId, 10) : null;
+    const categoryName = String(body.categoryName || '').trim();
+    const questionCount = Math.max(1, Math.min(20, parseInt(body.questionCount, 10) || 1));
+    const scheduleKind = String(body.scheduleKind || '').trim().toLowerCase();
+    const intervalMinutes = Math.max(1, parseInt(body.intervalMinutes, 10) || 0);
+    const dailyTime = String(body.dailyTime || '').trim();
+    if (!guildId || !channelId) return res.status(400).json({ error: 'guildId and channelId required' });
+    if (!['daily', 'interval'].includes(scheduleKind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
+    if (scheduleKind === 'daily' && !/^\d{2}:\d{2}$/.test(dailyTime)) return res.status(400).json({ error: 'dailyTime must be HH:MM' });
+    if (scheduleKind === 'interval' && intervalMinutes <= 0) return res.status(400).json({ error: 'intervalMinutes must be > 0' });
+    try {
+        if (!Number.isFinite(categoryId) && categoryName) {
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            if (!cat.rows.length) return res.status(400).json({ error: 'Category not found' });
+            categoryId = cat.rows[0].id;
+        }
+        const nextRun = computeDiscordScheduleNextRun({ schedule_kind: scheduleKind, interval_minutes: intervalMinutes, daily_time: dailyTime });
+        const r = await pool.query(
+            `INSERT INTO discord_trivia_schedules (
+                guild_id, channel_id, category_id, question_count, schedule_kind, interval_minutes, daily_time, enabled, next_run
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             RETURNING *`,
+            [guildId, channelId, categoryId, questionCount, scheduleKind, scheduleKind === 'interval' ? intervalMinutes : null, scheduleKind === 'daily' ? dailyTime : null, true, nextRun]
+        );
+        const created = await pool.query(
+            `SELECT s.*, c.name AS category_name
+             FROM discord_trivia_schedules s
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE s.id=$1`,
+            [r.rows[0].id]
+        );
+        res.json(created.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/bot/schedules/:id', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const body = req.body || {};
+    try {
+        const current = await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1', [id]);
+        if (!current.rows.length) return res.status(404).json({ error: 'Schedule not found' });
+        const row = current.rows[0];
+        let nextCategoryId = body.categoryId === null ? null : (body.categoryId !== undefined ? parseInt(body.categoryId, 10) : row.category_id);
+        const categoryName = String(body.categoryName || '').trim();
+        if (!Number.isFinite(nextCategoryId) && categoryName) {
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            if (!cat.rows.length) return res.status(400).json({ error: 'Category not found' });
+            nextCategoryId = cat.rows[0].id;
+        }
+        const next = {
+            category_id: nextCategoryId,
+            question_count: body.questionCount !== undefined ? Math.max(1, Math.min(20, parseInt(body.questionCount, 10) || row.question_count)) : row.question_count,
+            schedule_kind: body.scheduleKind ? String(body.scheduleKind).trim().toLowerCase() : row.schedule_kind,
+            interval_minutes: body.intervalMinutes !== undefined ? Math.max(1, parseInt(body.intervalMinutes, 10) || row.interval_minutes || 1) : row.interval_minutes,
+            daily_time: body.dailyTime !== undefined ? String(body.dailyTime || '').trim() : row.daily_time,
+            enabled: typeof body.enabled === 'boolean' ? body.enabled : row.enabled,
+        };
+        if (!['daily', 'interval'].includes(next.schedule_kind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
+        if (next.schedule_kind === 'daily' && !/^\d{2}:\d{2}$/.test(String(next.daily_time || ''))) return res.status(400).json({ error: 'dailyTime must be HH:MM' });
+        if (next.schedule_kind === 'interval' && (!Number.isFinite(Number(next.interval_minutes)) || Number(next.interval_minutes) <= 0)) {
+            return res.status(400).json({ error: 'intervalMinutes must be > 0' });
+        }
+        const nextRun = next.enabled ? computeDiscordScheduleNextRun(next) : null;
+        const r = await pool.query(
+            `UPDATE discord_trivia_schedules
+             SET category_id=$2, question_count=$3, schedule_kind=$4, interval_minutes=$5, daily_time=$6, enabled=$7, next_run=$8
+             WHERE id=$1
+             RETURNING *`,
+            [id, next.category_id, next.question_count, next.schedule_kind, next.schedule_kind === 'interval' ? next.interval_minutes : null, next.schedule_kind === 'daily' ? next.daily_time : null, next.enabled, nextRun]
+        );
+        const updated = await pool.query(
+            `SELECT s.*, c.name AS category_name
+             FROM discord_trivia_schedules s
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE s.id=$1`,
+            [r.rows[0].id]
+        );
+        res.json(updated.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/bot/schedules/:id', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    try {
+        await pool.query('DELETE FROM discord_trivia_schedules WHERE id=$1', [id]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/schedules/:id/mark-run', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    try {
+        const current = await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1', [id]);
+        if (!current.rows.length) return res.status(404).json({ error: 'Schedule not found' });
+        const row = current.rows[0];
+        const nextRun = row.enabled ? computeDiscordScheduleNextRun(row, new Date()) : null;
+        const r = await pool.query(
+            `UPDATE discord_trivia_schedules
+             SET last_run=NOW(), next_run=$2
+             WHERE id=$1
+             RETURNING *`,
+            [id, nextRun]
+        );
+        const updated = await pool.query(
+            `SELECT s.*, c.name AS category_name
+             FROM discord_trivia_schedules s
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE s.id=$1`,
+            [r.rows[0].id]
+        );
+        res.json(updated.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/trivia/questions', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const body = req.body || {};
+    const guildId = String(body.guildId || '').trim() || null;
+    const channelId = String(body.channelId || '').trim() || null;
+    const messageId = String(body.messageId || '').trim() || null;
+    const mode = String(body.mode || 'public').trim().toLowerCase();
+    const promptUserDiscordId = String(body.promptUserDiscordId || '').trim() || null;
+    const count = Math.max(1, Math.min(20, parseInt(body.count, 10) || 1));
+    const closeAfterSeconds = Math.max(15, Math.min(600, parseInt(body.closeAfterSeconds, 10) || (mode === 'direct' ? 300 : 45)));
+    let categoryId = body.categoryId ? parseInt(body.categoryId, 10) : null;
+    const categoryName = String(body.categoryName || '').trim();
+    try {
+        if (!categoryId && categoryName) {
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            if (cat.rows.length) categoryId = cat.rows[0].id;
+        }
+        const r = await pool.query(
+            `SELECT q.*, c.name AS category_name
+             FROM questions q
+             JOIN categories c ON c.id = q.category_id
+             WHERE q.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)
+             ORDER BY RANDOM()
+             LIMIT $2`,
+            [categoryId, count]
+        );
+        if (!r.rows.length) return res.status(404).json({ error: 'No questions available' });
+
+        const sessions = [];
+        for (const row of r.rows) {
+            const closesAt = new Date(Date.now() + closeAfterSeconds * 1000);
+            const session = await pool.query(
+                `INSERT INTO discord_trivia_sessions (
+                    guild_id, channel_id, message_id, question_id, category_id, mode, prompt_user_discord_id, close_after_seconds, closes_at
+                 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                 RETURNING *`,
+                [guildId, channelId, messageId, row.id, row.category_id, mode, promptUserDiscordId, closeAfterSeconds, closesAt]
+            );
+            const options = shuffleArray(compactQuestionOptions([
+                { char: 'A', text: row.option_a },
+                { char: 'B', text: row.option_b },
+                { char: 'C', text: row.option_c },
+                { char: 'D', text: row.option_d },
+            ]));
+            sessions.push({
+                session_id: session.rows[0].id,
+                closes_at: closesAt.toISOString(),
+                question: {
+                    id: row.id,
+                    category_id: row.category_id,
+                    category: row.category_name,
+                    text: row.text,
+                    options,
+                    complexity: row.complexity,
+                    image_url: row.image_url || null,
+                }
+            });
+        }
+        res.json({ sessions });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/bot/trivia/sessions/open', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    try {
+        const r = await pool.query(
+            `SELECT s.*
+             FROM discord_trivia_sessions s
+             WHERE s.closed_at IS NULL AND s.closes_at > NOW()
+             ORDER BY s.closes_at ASC`
+        );
+        res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const id = parseInt(req.params.id, 10);
+    const body = req.body || {};
+    const discordUserId = String(body.discordUserId || '').trim();
+    const discordUsername = String(body.discordUsername || '').trim() || null;
+    const selectedAnswer = String(body.selectedAnswer || '').trim().toUpperCase().slice(0, 1);
+    const elapsedMs = Number(body.elapsedMs) || 0;
+    if (!Number.isFinite(id) || !discordUserId || !['A', 'B', 'C', 'D'].includes(selectedAnswer)) {
+        return res.status(400).json({ error: 'session id, discordUserId, and selectedAnswer are required' });
+    }
+    try {
+        const sessionRes = await pool.query(
+            `SELECT s.*, q.correct_answer, q.complexity, q.category_id
+             FROM discord_trivia_sessions s
+             JOIN questions q ON q.id = s.question_id
+             WHERE s.id=$1`,
+            [id]
+        );
+        if (!sessionRes.rows.length) return res.status(404).json({ error: 'Session not found' });
+        const session = sessionRes.rows[0];
+        if (session.closed_at || (session.closes_at && new Date(session.closes_at) <= new Date())) {
+            return res.status(409).json({ error: 'Session is closed' });
+        }
+        if (session.mode === 'direct' && session.prompt_user_discord_id && session.prompt_user_discord_id !== discordUserId) {
+            return res.status(403).json({ error: 'This session is limited to a single user' });
+        }
+
+        const existing = await pool.query('SELECT id FROM discord_trivia_answers WHERE session_id=$1 AND discord_user_id=$2', [id, discordUserId]);
+        if (existing.rows.length) return res.status(409).json({ error: 'User already answered' });
+
+        const userRes = await pool.query('SELECT id, role, blocked_until FROM users WHERE discord_id=$1 LIMIT 1', [discordUserId]);
+        const linkedUser = userRes.rows[0] || null;
+        if (linkedUser?.blocked_until && new Date(linkedUser.blocked_until) > new Date() && linkedUser.role !== 'admin') {
+            return res.status(403).json({ error: 'Account is blocked', blocked_until: linkedUser.blocked_until });
+        }
+
+        const isCorrect = selectedAnswer === String(session.correct_answer || '').trim().toUpperCase();
+        const scoring = await getScoringSettings();
+        const points = linkedUser && isCorrect ? computePoints(elapsedMs, session.complexity, scoring) : 0;
+        const insert = await pool.query(
+            `INSERT INTO discord_trivia_answers (
+                session_id, guild_id, channel_id, question_id, category_id, discord_user_id, discord_username, user_id, selected_answer, is_correct, points_awarded
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+             RETURNING *`,
+            [id, session.guild_id, session.channel_id, session.question_id, session.category_id, discordUserId, discordUsername, linkedUser?.id || null, selectedAnswer, isCorrect, points]
+        );
+        if (linkedUser) {
+            await pool.query(
+                'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points,created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
+                [linkedUser.id, session.question_id, session.category_id, selectedAnswer, isCorrect, points]
+            );
+            if (points > 0) {
+                await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, linkedUser.id]);
+            }
+            adjustQuestionDifficulty(session.question_id, scoring).catch(() => {});
+        }
+        const countRes = await pool.query('SELECT COUNT(*) FROM discord_trivia_answers WHERE session_id=$1', [id]);
+        res.json({
+            accepted: true,
+            answer: insert.rows[0],
+            linked: !!linkedUser,
+            link_url: linkedUser ? null : buildDiscordLinkUrl('/'),
+            is_correct: isCorrect,
+            points_awarded: points,
+            answered_count: parseInt(countRes.rows[0].count, 10) || 0,
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/trivia/sessions/:id/close', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    try {
+        const sessionRes = await pool.query(
+            `SELECT s.*, q.correct_answer, q.option_a, q.option_b, q.option_c, q.option_d, c.name AS category_name
+             FROM discord_trivia_sessions s
+             JOIN questions q ON q.id = s.question_id
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE s.id=$1`,
+            [id]
+        );
+        if (!sessionRes.rows.length) return res.status(404).json({ error: 'Session not found' });
+        const session = sessionRes.rows[0];
+        if (!session.closed_at) {
+            await pool.query('UPDATE discord_trivia_sessions SET closed_at=NOW() WHERE id=$1', [id]);
+        }
+        const answers = await pool.query(
+            `SELECT selected_answer,
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE is_correct=TRUE)::int AS correct_total
+             FROM discord_trivia_answers
+             WHERE session_id=$1
+             GROUP BY selected_answer
+             ORDER BY selected_answer ASC`,
+            [id]
+        );
+        res.json({
+            session_id: session.id,
+            question_id: session.question_id,
+            category: session.category_name || 'General',
+            correct_answer: String(session.correct_answer).trim().toUpperCase(),
+            answer_counts: answers.rows,
+            total_answers: answers.rows.reduce((sum, row) => sum + (Number(row.total) || 0), 0),
+            options: {
+                A: session.option_a,
+                B: session.option_b,
+                C: session.option_c,
+                D: session.option_d,
+            }
+        });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/bot/leaderboard', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const guildId = String(req.query.guildId || '').trim();
+    let categoryId = req.query.categoryId ? parseInt(req.query.categoryId, 10) : null;
+    const categoryName = String(req.query.categoryName || '').trim();
+    const timeframe = String(req.query.timeframe || 'all').trim().toLowerCase();
+    const now = new Date();
+    let start = new Date(0);
+    if (timeframe === 'today' || timeframe === 'day') {
+        start = new Date(now); start.setHours(0, 0, 0, 0);
+    } else if (timeframe === 'this month' || timeframe === 'month') {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else if (timeframe === 'this year' || timeframe === 'year') {
+        start = new Date(now.getFullYear(), 0, 1);
+    }
+    try {
+        if (!categoryId && categoryName) {
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            if (cat.rows.length) categoryId = cat.rows[0].id;
+        }
+        const globalRows = await pool.query(
+            `SELECT u.id, u.display_name, u.email, u.discord_avatar_url, u.role,
+                    COALESCE(SUM(dta.points_awarded), 0)::int AS score,
+                    COUNT(dta.id)::int AS total_answered,
+                    COUNT(dta.id) FILTER (WHERE dta.is_correct=TRUE)::int AS correct_answered
+             FROM discord_trivia_answers dta
+             LEFT JOIN users u ON u.id = dta.user_id
+             WHERE dta.user_id IS NOT NULL
+               AND dta.answered_at >= $1
+               AND ($2::int IS NULL OR dta.category_id = $2)
+             GROUP BY u.id
+             ORDER BY score DESC, u.email ASC
+             LIMIT 25`,
+            [start, categoryId]
+        );
+        let serverRows = [];
+        if (guildId) {
+            const serverRes = await pool.query(
+                `SELECT u.id, u.display_name, u.email, u.discord_avatar_url, u.role,
+                        COALESCE(SUM(dta.points_awarded), 0)::int AS score,
+                        COUNT(dta.id)::int AS total_answered,
+                        COUNT(dta.id) FILTER (WHERE dta.is_correct=TRUE)::int AS correct_answered
+                 FROM discord_trivia_answers dta
+                 LEFT JOIN users u ON u.id = dta.user_id
+                 WHERE dta.user_id IS NOT NULL
+                   AND dta.guild_id = $1
+                   AND dta.answered_at >= $2
+                   AND ($3::int IS NULL OR dta.category_id = $3)
+                 GROUP BY u.id
+                 ORDER BY score DESC, u.email ASC
+                 LIMIT 25`,
+                [guildId, start, categoryId]
+            );
+            serverRows = serverRes.rows;
+        }
+        res.json({ server: serverRows, global: globalRows.rows });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2376,6 +3029,39 @@ app.post('/admin/discord-sso-settings', async (req, res) => {
         );
         const effective = await getDiscordSsoSettings();
         await auditLog(admin.id, 'DISCORD_SSO_SETTINGS_UPDATE', `enabled=${effective.enabled} configured=${effective.configured}`);
+        res.json({ ...inserted.rows[0], ...effective });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/discord-bot-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getDiscordBotSettingsSnapshot();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/discord-bot-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const body = req.body || {};
+    try {
+        const current = await getDiscordBotSettings();
+        const next = {
+            enabled: typeof body.enabled === 'boolean' ? body.enabled : !!current.enabled,
+            api_token: String(body.api_token ?? current.api_token ?? '').trim(),
+            public_app_url: normalizeBotBaseUrl(body.public_app_url ?? current.public_app_url ?? buildPublicAppUrl('/')),
+            service_url: normalizeBotBaseUrl(body.service_url ?? current.service_url ?? ''),
+        };
+        const inserted = await pool.query(
+            `INSERT INTO discord_bot_settings (enabled, api_token, public_app_url, service_url)
+             VALUES ($1,$2,$3,$4)
+             RETURNING *`,
+            [next.enabled, next.api_token || null, next.public_app_url || null, next.service_url || null]
+        );
+        const effective = await getDiscordBotSettingsSnapshot();
+        await auditLog(admin.id, 'DISCORD_BOT_SETTINGS_UPDATE', `enabled=${effective.enabled} configured=${effective.configured}`);
         res.json({ ...inserted.rows[0], ...effective });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
