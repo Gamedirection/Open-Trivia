@@ -37,6 +37,160 @@ function gravatarHash(email) {
     return crypto.createHash('md5').update(String(email).trim().toLowerCase()).digest('hex');
 }
 
+function base64UrlEncode(value) {
+    return Buffer.from(String(value), 'utf8').toString('base64url');
+}
+
+function buildAppUrl(pathname = '/') {
+    const base = String(process.env.APP_URL || 'http://localhost:3000').trim().replace(/\/+$/, '');
+    const nextPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
+    return `${base}${nextPath}`;
+}
+
+function resolveDiscordRedirectUri(redirectUri) {
+    const explicit = String(redirectUri || '').trim();
+    if (explicit) return explicit;
+    return buildAppUrl('/api/auth/discord/callback');
+}
+
+function signAuthToken(user) {
+    return jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '7d' });
+}
+
+function makeFallbackPassword() {
+    return crypto.randomBytes(32).toString('hex');
+}
+
+function normalizeUserRow(row, privacySettings = null) {
+    if (!row) return null;
+    const displayName = row.display_name || maskEmail(row.email);
+    const showEmail = privacySettings
+        ? resolveShowEmail(row.show_email, privacySettings)
+        : (row.show_email ?? true);
+    const { password_hash, ...user } = row;
+    return { ...user, display_name: displayName, show_email: showEmail };
+}
+
+function buildDiscordAvatarUrl(discordId, avatarHash) {
+    if (!discordId || !avatarHash) return null;
+    const ext = avatarHash.startsWith('a_') ? 'gif' : 'png';
+    return `https://cdn.discordapp.com/avatars/${discordId}/${avatarHash}.${ext}`;
+}
+
+function buildDiscordState(targetPath = '/') {
+    return jwt.sign(
+        { provider: 'discord', targetPath, nonce: crypto.randomBytes(12).toString('hex') },
+        process.env.JWT_SECRET,
+        { expiresIn: '10m' }
+    );
+}
+
+function verifyDiscordState(state) {
+    return jwt.verify(state, process.env.JWT_SECRET);
+}
+
+async function exchangeDiscordCodeForToken(code, settings) {
+    const body = new URLSearchParams({
+        client_id: settings.client_id,
+        client_secret: settings.client_secret,
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: resolveDiscordRedirectUri(settings.redirect_uri),
+    });
+    const response = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const message = data.error_description || data.error || 'Discord token exchange failed';
+        throw new Error(message);
+    }
+    return data;
+}
+
+async function fetchDiscordUser(accessToken) {
+    const response = await fetch('https://discord.com/api/users/@me', {
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+        },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const message = data.message || 'Discord profile lookup failed';
+        throw new Error(message);
+    }
+    return data;
+}
+
+function resolveDiscordDisplayName(profile) {
+    const preferred = [
+        profile.global_name,
+        profile.username,
+        profile.email ? maskEmail(profile.email) : null,
+        'Discord Player',
+    ];
+    const value = preferred.find(Boolean);
+    return String(value).slice(0, 60);
+}
+
+async function upsertDiscordUser(profile) {
+    const email = String(profile.email || '').trim().toLowerCase();
+    if (!email) throw new Error('Discord account did not provide an email address');
+    if (!profile.verified) throw new Error('Discord email must be verified');
+
+    const privacy = await getPrivacySettings();
+    const showEmail = !privacy.hide_emails_by_default;
+    const displayName = resolveDiscordDisplayName(profile);
+    const discordId = String(profile.id);
+    const discordUsername = String(profile.username || '').trim() || null;
+    const discordAvatarUrl = buildDiscordAvatarUrl(discordId, profile.avatar);
+    const countRes = await pool.query('SELECT COUNT(*) FROM users WHERE is_anonymous=FALSE');
+    const defaultRole = parseInt(countRes.rows[0].count, 10) === 0 ? 'admin' : 'player';
+
+    const existing = await pool.query(
+        'SELECT * FROM users WHERE discord_id=$1 OR email=$2 ORDER BY CASE WHEN discord_id=$1 THEN 0 ELSE 1 END LIMIT 1',
+        [discordId, email]
+    );
+
+    if (existing.rows.length) {
+        const row = existing.rows[0];
+        if (row.discord_id && row.discord_id !== discordId) {
+            throw new Error('This account is already linked to a different Discord profile');
+        }
+        if (row.email !== email && row.discord_id === discordId) {
+            throw new Error('Discord account is already linked to another email');
+        }
+        const nextDisplayName = row.display_name || displayName;
+        const nextShowEmail = row.show_email === null || row.show_email === undefined ? showEmail : row.show_email;
+        const updated = await pool.query(
+            `UPDATE users
+             SET email=$1,
+                 discord_id=$2,
+                 discord_username=$3,
+                 discord_avatar_url=$4,
+                 display_name=$5,
+                 show_email=$6
+             WHERE id=$7
+             RETURNING *`,
+            [email, discordId, discordUsername, discordAvatarUrl, nextDisplayName, nextShowEmail, row.id]
+        );
+        return normalizeUserRow(updated.rows[0], privacy);
+    }
+
+    const inserted = await pool.query(
+        `INSERT INTO users (
+            email, password_hash, role, display_name, show_email, discord_id, discord_username, discord_avatar_url
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         RETURNING *`,
+        [email, await bcrypt.hash(makeFallbackPassword(), 10), defaultRole, displayName, showEmail, discordId, discordUsername, discordAvatarUrl]
+    );
+    return normalizeUserRow(inserted.rows[0], privacy);
+}
+
 function resolveShowEmail(userShowEmail, privacySettings) {
     if (userShowEmail === null || userShowEmail === undefined) {
         return !privacySettings.hide_emails_by_default;
@@ -463,6 +617,14 @@ function getTokenUser(req) {
         return jwt.verify(h.split(' ')[1], process.env.JWT_SECRET);
     } catch { return null; }
 }
+
+function redirectDiscordResult(res, payload) {
+    const params = new URLSearchParams();
+    Object.entries(payload).forEach(([key, value]) => {
+        if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+    });
+    res.redirect(buildAppUrl(`/auth/discord/callback#${params.toString()}`));
+}
 async function isUserBlocked(userId) {
     const r = await pool.query('SELECT role, blocked_until FROM users WHERE id=$1', [userId]);
     if (!r.rows.length) return false;
@@ -515,7 +677,10 @@ async function initDatabase() {
                 blocked_until TIMESTAMP,
                 blocked_reason TEXT,
                 display_name VARCHAR(60),
-                show_email BOOLEAN
+                show_email BOOLEAN,
+                discord_id VARCHAR(50) UNIQUE,
+                discord_username VARCHAR(255),
+                discord_avatar_url TEXT
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
@@ -622,6 +787,14 @@ async function initDatabase() {
                 max_image_kb INT DEFAULT 512,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS discord_sso_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                client_id TEXT,
+                client_secret TEXT,
+                redirect_uri TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
             CREATE TABLE IF NOT EXISTS password_reset_tokens (
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id) ON DELETE CASCADE,
@@ -661,6 +834,10 @@ async function initDatabase() {
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked_reason TEXT`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name VARCHAR(60)`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS show_email BOOLEAN`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(50)`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_username VARCHAR(255)`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_avatar_url TEXT`,
+            `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS category_id INT REFERENCES categories(id)`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
@@ -724,6 +901,14 @@ async function initDatabase() {
                 max_image_kb INT DEFAULT 512,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `CREATE TABLE IF NOT EXISTS discord_sso_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                client_id TEXT,
+                client_secret TEXT,
+                redirect_uri TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_min_attempts INT DEFAULT 25`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_up_threshold NUMERIC DEFAULT 0.4`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_down_threshold NUMERIC DEFAULT 0.8`,
@@ -781,7 +966,12 @@ async function initDatabase() {
 }
 
 const app = express();
-app.use(cors({ origin: ['http://localhost:3009','http://localhost:3000'], credentials: true }));
+const corsOrigins = [
+    'http://localhost:3009',
+    'http://localhost:3000',
+    String(process.env.APP_URL || '').trim(),
+].filter(Boolean);
+app.use(cors({ origin: corsOrigins, credentials: true }));
 app.use(express.json());
 app.use((req, _res, next) => { console.log(`📨 ${req.method} ${req.path}`); next(); });
 const uploadsRoot = path.join(__dirname, 'uploads');
@@ -910,6 +1100,28 @@ async function getImageSettings() {
     return inserted.rows[0];
 }
 
+async function getDiscordSsoSettings() {
+    const envSettings = {
+        enabled: false,
+        client_id: String(process.env.DISCORD_CLIENT_ID || '').trim(),
+        client_secret: String(process.env.DISCORD_CLIENT_SECRET || '').trim(),
+        redirect_uri: String(process.env.DISCORD_REDIRECT_URI || '').trim(),
+    };
+    const r = await pool.query('SELECT * FROM discord_sso_settings ORDER BY id DESC LIMIT 1');
+    const row = r.rows[0] || {};
+    const merged = {
+        enabled: row.enabled ?? envSettings.enabled,
+        client_id: String(row.client_id || envSettings.client_id || '').trim(),
+        client_secret: String(row.client_secret || envSettings.client_secret || '').trim(),
+        redirect_uri: String(row.redirect_uri || envSettings.redirect_uri || '').trim(),
+        updated_at: row.updated_at || null,
+    };
+    merged.redirect_uri = resolveDiscordRedirectUri(merged.redirect_uri);
+    merged.configured = !!(merged.client_id && merged.client_secret && process.env.JWT_SECRET);
+    merged.active = !!(merged.enabled && merged.configured);
+    return merged;
+}
+
 async function collectSnapshot() {
     const tables = [
         'users',
@@ -924,6 +1136,7 @@ async function collectSnapshot() {
         'privacy_settings',
         'rate_limit_settings',
         'image_settings',
+        'discord_sso_settings',
         'audit_logs',
         'password_reset_tokens',
     ];
@@ -941,7 +1154,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         throw new Error('Invalid snapshot data');
     }
     const tables = {
-        users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason','display_name','show_email'],
+        users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason','display_name','show_email','discord_id','discord_username','discord_avatar_url'],
         categories: ['id','name'],
         questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'],
         pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'],
@@ -953,6 +1166,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         privacy_settings: ['id','hide_emails_globally','hide_emails_by_default','updated_at'],
         rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','open_trivia_db_enabled','skip_per_hour','updated_at'],
         image_settings: ['id','max_image_kb','updated_at'],
+        discord_sso_settings: ['id','enabled','client_id','client_secret','redirect_uri','updated_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
         password_reset_tokens: ['id','user_id','token','expires_at','used','created_at'],
     };
@@ -961,7 +1175,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
     try {
         await client.query('BEGIN');
         if (mode === 'replace') {
-            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, privacy_settings, rate_limit_settings, image_settings, questions, categories, users RESTART IDENTITY CASCADE');
+            await client.query('TRUNCATE TABLE password_reset_tokens, audit_logs, question_reports, pending_questions, game_sessions, score_resets, leaderboard_schedules, scoring_settings, privacy_settings, rate_limit_settings, image_settings, discord_sso_settings, questions, categories, users RESTART IDENTITY CASCADE');
         }
 
         for (const [table, cols] of Object.entries(tables)) {
@@ -996,6 +1210,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
             'privacy_settings_id_seq',
             'rate_limit_settings_id_seq',
             'image_settings_id_seq',
+            'discord_sso_settings_id_seq',
             'audit_logs_id_seq',
             'password_reset_tokens_id_seq',
             'backup_snapshots_id_seq',
@@ -1031,11 +1246,12 @@ app.post('/register', async (req, res) => {
         const countRes = await pool.query('SELECT COUNT(*) FROM users WHERE is_anonymous=FALSE');
         const role = parseInt(countRes.rows[0].count) === 0 ? 'admin' : 'player';
         const r = await runQuery(
-            'INSERT INTO users (email,password_hash,role,display_name,show_email) VALUES ($1,$2,$3,$4,$5) RETURNING id,email,role,score,display_name,show_email',
+            'INSERT INTO users (email,password_hash,role,display_name,show_email) VALUES ($1,$2,$3,$4,$5) RETURNING *',
             [email, hashed, role, displayName, showEmail]
         );
-        const token = jwt.sign({ id: r.rows[0].id, role: r.rows[0].role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        res.json({ user: r.rows[0], token });
+        const user = normalizeUserRow(r.rows[0], privacy);
+        const token = signAuthToken(user);
+        res.json({ user, token });
     } catch (err) {
         if (err.code === '23505') return res.status(400).json({ error: 'User already exists' });
         res.status(500).json({ error: err.message });
@@ -1070,10 +1286,77 @@ app.post('/login', async (req, res) => {
                 [displayName, showEmail, r.rows[0].id]
             );
         }
-        const token = jwt.sign({ id: r.rows[0].id, role: r.rows[0].role }, process.env.JWT_SECRET, { expiresIn: '7d' });
-        const { password_hash, ...user } = { ...r.rows[0], display_name: displayName, show_email: showEmail };
+        const user = normalizeUserRow({ ...r.rows[0], display_name: displayName, show_email: showEmail });
+        const token = signAuthToken(user);
         res.json({ user, token });
     } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/auth/providers', async (_req, res) => {
+    try {
+        const settings = await getDiscordSsoSettings();
+        res.json({
+            discord: {
+                enabled: settings.active,
+                configured: settings.configured,
+            }
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/auth/discord/start', async (req, res) => {
+    const settings = await getDiscordSsoSettings();
+    if (!settings.active) {
+        return res.status(503).json({ error: 'Discord SSO is not configured' });
+    }
+    try {
+        const targetPath = String(req.query.target || '/').trim() || '/';
+        const state = buildDiscordState(targetPath.startsWith('/') ? targetPath : '/');
+        const url = new URL('https://discord.com/oauth2/authorize');
+        url.searchParams.set('client_id', settings.client_id);
+        url.searchParams.set('response_type', 'code');
+        url.searchParams.set('redirect_uri', settings.redirect_uri);
+        url.searchParams.set('scope', 'identify email');
+        url.searchParams.set('state', state);
+        res.redirect(url.toString());
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/auth/discord/callback', async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) {
+        return redirectDiscordResult(res, { error: `Discord authorization failed: ${error}` });
+    }
+    if (!code || !state) {
+        return redirectDiscordResult(res, { error: 'Missing Discord OAuth callback parameters' });
+    }
+    try {
+        const settings = await getDiscordSsoSettings();
+        if (!settings.active) {
+            return redirectDiscordResult(res, { error: 'Discord SSO is not configured' });
+        }
+        const verifiedState = verifyDiscordState(String(state));
+        const tokenData = await exchangeDiscordCodeForToken(String(code), settings);
+        const profile = await fetchDiscordUser(tokenData.access_token);
+        const user = await upsertDiscordUser(profile);
+        if (user.blocked_until && new Date(user.blocked_until) > new Date() && user.role !== 'admin') {
+            return redirectDiscordResult(res, {
+                error: 'Account is blocked',
+                blocked_until: user.blocked_until,
+            });
+        }
+        redirectDiscordResult(res, {
+            token: signAuthToken(user),
+            user: base64UrlEncode(JSON.stringify(user)),
+            target: verifiedState.targetPath || '/',
+        });
+    } catch (err) {
+        redirectDiscordResult(res, { error: err.message || 'Discord sign-in failed' });
+    }
 });
 
 // ── PASSWORD RESET ─────────────────────────────────────────────────────────────
@@ -1594,6 +1877,7 @@ app.get('/leaderboard', async (req, res) => {
                 u.email,
                 u.display_name,
                 u.show_email,
+                u.discord_avatar_url,
                 COALESCE(s.score, 0) AS score,
                 COALESCE(s.correct_answered, 0) AS correct_answered,
                 COALESCE(s.total_answered, 0) AS total_answered,
@@ -1614,6 +1898,7 @@ app.get('/leaderboard', async (req, res) => {
                 id: row.id,
                 email: canShowEmail ? row.email : null,
                 gravatar_hash: gravatarHash(row.email),
+                discord_avatar_url: row.discord_avatar_url || null,
                 display_name: displayName,
                 score: row.score,
                 correct_answered: row.correct_answered,
@@ -1741,7 +2026,7 @@ app.get('/me/profile', async (req, res) => {
     const u = await requireAuth(req, res);
     if (!u) return;
     try {
-        const r = await pool.query('SELECT email, display_name, show_email FROM users WHERE id=$1', [u.id]);
+        const r = await pool.query('SELECT email, display_name, show_email, discord_id, discord_username FROM users WHERE id=$1', [u.id]);
         if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
         const privacy = await getPrivacySettings();
         let displayName = r.rows[0].display_name;
@@ -1758,6 +2043,8 @@ app.get('/me/profile', async (req, res) => {
             effective_show_email: effectiveShowEmail,
             hide_emails_globally: privacy.hide_emails_globally,
             hide_emails_by_default: privacy.hide_emails_by_default,
+            discord_linked: !!r.rows[0].discord_id,
+            discord_username: r.rows[0].discord_username,
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1866,6 +2153,7 @@ app.get('/admin/users', async (req, res) => {
     try {
         const r = await pool.query(`
             SELECT u.id, u.email, u.role, u.is_anonymous, u.blocked_until, u.blocked_reason, u.display_name, u.show_email,
+                   u.discord_id, u.discord_username, u.discord_avatar_url,
                    COALESCE(SUM(gs.points), 0)::int AS score,
                    COUNT(gs.id)::int AS games_played,
                    COUNT(gs.id) FILTER (WHERE gs.is_correct = TRUE)::int AS correct_answers
@@ -2055,6 +2343,40 @@ app.post('/admin/image-settings', async (req, res) => {
         );
         await auditLog(admin.id, 'IMAGE_SETTINGS_UPDATE', `max_kb=${next.max_image_kb}`);
         res.json(r.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/discord-sso-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const settings = await getDiscordSsoSettings();
+        res.json(settings);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/discord-sso-settings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const body = req.body || {};
+    try {
+        const current = await getDiscordSsoSettings();
+        const next = {
+            enabled: typeof body.enabled === 'boolean' ? body.enabled : !!current.enabled,
+            client_id: String(body.client_id ?? current.client_id ?? '').trim(),
+            client_secret: String(body.client_secret ?? current.client_secret ?? '').trim(),
+            redirect_uri: String(body.redirect_uri ?? current.redirect_uri ?? '').trim(),
+        };
+        const redirectUri = resolveDiscordRedirectUri(next.redirect_uri);
+        const inserted = await pool.query(
+            `INSERT INTO discord_sso_settings (enabled, client_id, client_secret, redirect_uri)
+             VALUES ($1,$2,$3,$4)
+             RETURNING *`,
+            [next.enabled, next.client_id || null, next.client_secret || null, redirectUri]
+        );
+        const effective = await getDiscordSsoSettings();
+        await auditLog(admin.id, 'DISCORD_SSO_SETTINGS_UPDATE', `enabled=${effective.enabled} configured=${effective.configured}`);
+        res.json({ ...inserted.rows[0], ...effective });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2563,9 +2885,9 @@ app.post('/admin/backup/restore-user', async (req, res) => {
             await client.query('DELETE FROM pending_questions WHERE user_id=$1', [uid]);
             await client.query('DELETE FROM users WHERE id=$1', [uid]);
             await client.query(
-                `INSERT INTO users (id,email,password_hash,role,score,is_anonymous,blocked_until,blocked_reason,display_name,show_email)
-                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-                [userRow.id, userRow.email, userRow.password_hash, userRow.role, userRow.score, userRow.is_anonymous, userRow.blocked_until, userRow.blocked_reason, userRow.display_name, userRow.show_email]
+                `INSERT INTO users (id,email,password_hash,role,score,is_anonymous,blocked_until,blocked_reason,display_name,show_email,discord_id,discord_username,discord_avatar_url)
+                 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+                [userRow.id, userRow.email, userRow.password_hash, userRow.role, userRow.score, userRow.is_anonymous, userRow.blocked_until, userRow.blocked_reason, userRow.display_name, userRow.show_email, userRow.discord_id, userRow.discord_username, userRow.discord_avatar_url]
             );
 
             const restoreRows = async (table, cols, rows) => {

@@ -25,7 +25,10 @@ async function initDB() {
                 blocked_until TIMESTAMP,
                 blocked_reason TEXT,
                 display_name VARCHAR(60),
-                show_email BOOLEAN
+                show_email BOOLEAN,
+                discord_id VARCHAR(50) UNIQUE,
+                discord_username VARCHAR(255),
+                discord_avatar_url TEXT
             );
             
             CREATE TABLE IF NOT EXISTS categories (
@@ -140,6 +143,15 @@ async function initDB() {
             CREATE TABLE IF NOT EXISTS image_settings (
                 id SERIAL PRIMARY KEY,
                 max_image_kb INT DEFAULT 512,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_sso_settings (
+                id SERIAL PRIMARY KEY,
+                enabled BOOLEAN DEFAULT FALSE,
+                client_id TEXT,
+                client_secret TEXT,
+                redirect_uri TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 

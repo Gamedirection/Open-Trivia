@@ -139,6 +139,22 @@ export default function Leaderboard() {
 
     const renderAvatar = (user) => {
         if (!showGravatar || censorNames) return null;
+        if (user.discord_avatar_url) {
+            return (
+                <img
+                    src={user.discord_avatar_url}
+                    alt={user.display_name || 'Player'}
+                    width={35}
+                    height={35}
+                    style={{
+                        borderRadius: '50%',
+                        marginRight: '15px',
+                        border: '2px solid var(--header-bg)',
+                        flexShrink: 0
+                    }}
+                />
+            );
+        }
         const hashUrl = gravatarUrlFromHash(user.gravatar_hash, 70);
         if (hashUrl) {
             return (

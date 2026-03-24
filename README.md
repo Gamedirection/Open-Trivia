@@ -8,13 +8,13 @@ Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
 
 ## Key Features
-- Auth with password reset, admin roles, and account blocking.
+- Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Leaderboards with category and timeframe filters (day/month/year).
-- Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries.
+- Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries, Discord avatars with Gravatar fallback.
 - Timer-based scoring with configurable min/max points.
 - Adaptive question difficulty based on answer accuracy.
 - User dashboard with stats and per-category breakdown.
-- Profile & privacy: display name edits, email visibility toggle, optional Gravatar icons.
+- Profile & privacy: display name edits, email visibility toggle, optional avatar display, Discord avatar preference when linked.
 - Question images by URL or admin uploads (png/jpg/jpeg/svg/webp).
 - User suggestions can include image URLs.
 - Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip, GitHub, or a GitHub release asset URL.
@@ -43,6 +43,16 @@ JWT_SECRET=change-me
 APP_URL=http://localhost:3000
 ```
 
+### Discord SSO (optional)
+```bash
+DISCORD_CLIENT_ID=your-discord-app-client-id
+DISCORD_CLIENT_SECRET=your-discord-app-client-secret
+# Optional override. Defaults to ${APP_URL}/api/auth/discord/callback
+DISCORD_REDIRECT_URI=http://localhost:3000/api/auth/discord/callback
+```
+
+Set the Discord application redirect URI to the same callback URL you configure above. You can also manage these values later from the admin panel Data section, where admins can enable/disable Discord login and view the embedded setup instructions dropdown.
+
 ### Scoring Config (optional)
 ```bash
 SCORE_MIN_POINTS=5
@@ -63,6 +73,7 @@ DIFF_DOWN_THRESHOLD=0.8
 - Image size limits for question images.
 - Admin image uploads for questions.
 - Category pack export/import (zip, GitHub, or release asset URL) + template download.
+- Data section: backups/export/import plus Discord SSO configuration and setup guidance.
 
 ## Shared Collections
 Community packs can be browsed at `questions.trivia.gamedirection.net`.  
@@ -120,8 +131,8 @@ helm install open-trivia helm/open-trivia
 Override values:
 ```bash
 helm install open-trivia helm/open-trivia \
-  --set image.frontend.tag=v0.3.2 \
-  --set image.backend.tag=v0.3.2 \
+  --set image.frontend.tag=v0.3.3 \
+  --set image.backend.tag=v0.3.3 \
   --set backend.env.JWT_SECRET=change-me
 ```
 

@@ -19,6 +19,12 @@ const Badge = ({ color, text }) => (
     }}>{text}</span>
 );
 
+const getUserAvatarUrl = (user, size = 48) => {
+    if (user?.discord_avatar_url) return user.discord_avatar_url;
+    if (user?.email) return gravatarUrl(user.email, size);
+    return '';
+};
+
 const Toast = ({ msg }) => msg ? (
     <div style={{
         padding: '12px 18px', marginBottom: '18px', borderRadius: '8px',
@@ -273,6 +279,8 @@ export default function Admin() {
     // Data management
     const [backups, setBackups] = useState([]);
     const [backupLoading, setBackupLoading] = useState(false);
+    const [discordSso, setDiscordSso] = useState(null);
+    const [discordSsoSaving, setDiscordSsoSaving] = useState(false);
 
     const flash = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 3500); }, []);
 
@@ -341,6 +349,13 @@ export default function Admin() {
         finally { setBackupLoading(false); }
     }, []);
 
+    const loadDiscordSsoSettings = useCallback(async () => {
+        try {
+            const r = await axios.get(`${API_URL}/admin/discord-sso-settings`, authCfg());
+            setDiscordSso(r.data);
+        } catch { flash('❌ Failed to load Discord SSO settings'); }
+    }, []);
+
     const loadScoringSettings = useCallback(async () => {
         try {
             const r = await axios.get(`${API_URL}/admin/scoring-settings`, authCfg());
@@ -380,6 +395,7 @@ export default function Admin() {
     useEffect(() => { if (tab === 'leaderboard') loadRateLimitSettings(); }, [tab]);
     useEffect(() => { if (tab === 'leaderboard') loadImageSettings(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
+    useEffect(() => { if (tab === 'data') loadDiscordSsoSettings(); }, [tab]);
 
     // ── Category actions ───────────────────────────────────────────────────────
     const addCategory = async () => {
@@ -594,6 +610,22 @@ export default function Admin() {
             flash('✅ Backup created');
             loadBackups();
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Backup failed')); }
+    };
+
+    const saveDiscordSsoSettings = async () => {
+        if (!discordSso) return;
+        setDiscordSsoSaving(true);
+        try {
+            const r = await axios.post(`${API_URL}/admin/discord-sso-settings`, {
+                enabled: !!discordSso.enabled,
+                client_id: discordSso.client_id || '',
+                client_secret: discordSso.client_secret || '',
+                redirect_uri: discordSso.redirect_uri || '',
+            }, authCfg());
+            setDiscordSso(r.data);
+            flash(r.data.active ? '✅ Discord SSO saved and active' : '✅ Discord SSO settings saved');
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Save failed')); }
+        finally { setDiscordSsoSaving(false); }
     };
 
     const exportData = async () => {
@@ -1061,8 +1093,8 @@ export default function Admin() {
                                                 <td style={{ padding: '10px 8px' }}>
                                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                         <img
-                                                            src={gravatarUrl(u.email, 48)}
-                                                            alt={u.email}
+                                                            src={getUserAvatarUrl(u, 48)}
+                                                            alt={u.display_name || u.email}
                                                             width={24}
                                                             height={24}
                                                             style={{ borderRadius: '50%', border: '1px solid var(--border-color)' }}
@@ -1226,6 +1258,103 @@ export default function Admin() {
                             <button className="btn" onClick={exportData} style={{ backgroundColor: '#6c757d', color: 'white' }}>Export Data</button>
                             <button className="btn" onClick={restoreUser} style={{ backgroundColor: '#ff9800', color: 'white' }}>Restore User</button>
                         </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, marginBottom: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginBottom: '12px' }}>
+                            <h4 style={{ margin: 0 }}>Discord SSO</h4>
+                            {discordSso?.active ? (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#155724', backgroundColor: '#d4edda', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Active
+                                </span>
+                            ) : discordSso?.configured ? (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#856404', backgroundColor: '#fff3cd', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Configured but disabled
+                                </span>
+                            ) : (
+                                <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#721c24', backgroundColor: '#f8d7da', padding: '4px 8px', borderRadius: '999px' }}>
+                                    Not configured
+                                </span>
+                            )}
+                        </div>
+                        {!discordSso ? (
+                            <p style={{ color: '#888' }}>Loading Discord SSO settings...</p>
+                        ) : (
+                            <div style={{ display: 'grid', gap: '10px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={!!discordSso.enabled}
+                                        onChange={e => setDiscordSso({ ...discordSso, enabled: e.target.checked })}
+                                    />
+                                    Enable Discord login button and OAuth flow
+                                </label>
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Discord Client ID</label>
+                                        <input
+                                            value={discordSso.client_id || ''}
+                                            onChange={e => setDiscordSso({ ...discordSso, client_id: e.target.value })}
+                                            placeholder="123456789012345678"
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Discord Client Secret</label>
+                                        <input
+                                            type="password"
+                                            value={discordSso.client_secret || ''}
+                                            onChange={e => setDiscordSso({ ...discordSso, client_secret: e.target.value })}
+                                            placeholder="Paste the Discord application secret"
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label style={{ fontSize: '12px', color: '#888' }}>Redirect URI</label>
+                                    <input
+                                        value={discordSso.redirect_uri || ''}
+                                        onChange={e => setDiscordSso({ ...discordSso, redirect_uri: e.target.value })}
+                                        placeholder="http://localhost:3000/api/auth/discord/callback"
+                                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                    />
+                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                        Leave blank to use the default callback based on `APP_URL`.
+                                    </div>
+                                </div>
+
+                                <div style={{ fontSize: '12px', color: '#666', lineHeight: 1.5 }}>
+                                    Current callback in use: <code>{discordSso.redirect_uri || 'http://localhost:3000/api/auth/discord/callback'}</code>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                                    <button className="btn btn-primary" onClick={saveDiscordSsoSettings} disabled={discordSsoSaving}>
+                                        {discordSsoSaving ? 'Saving...' : 'Save Discord SSO Settings'}
+                                    </button>
+                                    <button
+                                        className="btn"
+                                        onClick={loadDiscordSsoSettings}
+                                        style={{ backgroundColor: '#6c757d', color: 'white' }}
+                                    >
+                                        Reload
+                                    </button>
+                                </div>
+
+                                <details style={{ marginTop: '4px' }}>
+                                    <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Setup Instructions</summary>
+                                    <div style={{ marginTop: '10px', fontSize: '13px', color: '#555', display: 'grid', gap: '8px' }}>
+                                        <div>1. Open the Discord Developer Portal and create an application.</div>
+                                        <div>2. Under OAuth2, copy the Client ID and generate a Client Secret.</div>
+                                        <div>3. Add this redirect URI in Discord: <code>{discordSso.redirect_uri || 'http://localhost:3000/api/auth/discord/callback'}</code></div>
+                                        <div>4. Save the Client ID, Client Secret, and redirect URI here.</div>
+                                        <div>5. Turn on “Enable Discord login button and OAuth flow” and save again.</div>
+                                        <div>6. Test sign-in from the public login modal. Discord must return a verified email address.</div>
+                                    </div>
+                                </details>
+                            </div>
+                        )}
                     </div>
 
                     <div style={{ ...cardStyle, marginBottom: '16px' }}>

@@ -25,6 +25,18 @@ const getDisplayName = (u) => {
     return 'Guest';
 };
 
+const getUserAvatarUrl = (u, size = 48) => {
+    if (u?.discord_avatar_url) return u.discord_avatar_url;
+    if (u?.email) return gravatarUrl(u.email, size);
+    return '';
+};
+
+const decodeBase64Url = (value) => {
+    const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4);
+    return atob(padded);
+};
+
 const BrandMark = ({ size = 24 }) => {
     if (BRAND_LOGO_URL) {
         return (
@@ -101,10 +113,10 @@ const AppHeader = ({ user, onLogout }) => {
                     <LoginModal />
                 ) : (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        {storedUser?.email && (
+                        {getUserAvatarUrl(storedUser, 48) && (
                             <img
-                                src={gravatarUrl(storedUser.email, 48)}
-                                alt={storedUser.email}
+                                src={getUserAvatarUrl(storedUser, 48)}
+                                alt={storedUser?.display_name || storedUser?.email || 'User avatar'}
                                 width={28}
                                 height={28}
                                 style={{ borderRadius: '50%', border: '2px solid rgba(255,255,255,0.6)' }}
@@ -139,6 +151,19 @@ const LoginModal = () => {
     const [password, setPassword] = useState('');
     const [error, setError]       = useState('');
     const [success, setSuccess]   = useState('');
+    const [discordEnabled, setDiscordEnabled] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        axios.get(`${API_URL}/auth/providers`)
+            .then((res) => {
+                if (!cancelled) setDiscordEnabled(!!res.data?.discord?.enabled);
+            })
+            .catch(() => {
+                if (!cancelled) setDiscordEnabled(false);
+            });
+        return () => { cancelled = true; };
+    }, []);
 
     const clearMessages = () => { setError(''); setSuccess(''); };
     const switchView = (v) => { clearMessages(); setView(v); };
@@ -193,6 +218,11 @@ const LoginModal = () => {
         } catch (err) {
             setError(err.response?.data?.error || 'Request failed.');
         }
+    };
+
+    const handleDiscordLogin = () => {
+        const target = window.location.pathname || '/';
+        window.location.assign(`${API_URL}/auth/discord/start?target=${encodeURIComponent(target)}`);
     };
 
     if (!isOpen) {
@@ -253,6 +283,23 @@ const LoginModal = () => {
                             <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required style={iStyle} />
                             <button type="submit" className="btn btn-primary" style={{ padding: '10px' }}>Sign In</button>
                         </form>
+                        {discordEnabled && (
+                            <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', margin: '14px 0 4px' }}>
+                                    <div style={{ flex: 1, height: '1px', backgroundColor: '#ddd' }} />
+                                    <span style={{ fontSize: '0.8rem', color: '#666', textTransform: 'uppercase', letterSpacing: '0.08em' }}>or</span>
+                                    <div style={{ flex: 1, height: '1px', backgroundColor: '#ddd' }} />
+                                </div>
+                                <button
+                                    type="button"
+                                    className="btn"
+                                    onClick={handleDiscordLogin}
+                                    style={{ padding: '10px', backgroundColor: '#5865F2', color: 'white' }}
+                                >
+                                    Continue with Discord
+                                </button>
+                            </>
+                        )}
                         <div style={{ marginTop: '14px', display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
                             <button style={linkStyle} onClick={() => switchView('forgot')}>Forgot password?</button>
                             <button style={linkStyle} onClick={() => switchView('register')}>Create an account →</button>
@@ -292,6 +339,72 @@ const LoginModal = () => {
                             <button style={linkStyle} onClick={() => switchView('login')}>← Back to sign in</button>
                         </div>
                     </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const DiscordAuthCallback = () => {
+    const location = useLocation();
+    const [message, setMessage] = useState('Finalizing Discord sign-in...');
+    const [error, setError] = useState('');
+
+    useEffect(() => {
+        const query = new URLSearchParams(location.search || '');
+        const oauthCode = query.get('code');
+        const oauthState = query.get('state');
+        const oauthError = query.get('error');
+
+        if (oauthCode || oauthState || oauthError) {
+            const qs = new URLSearchParams();
+            if (oauthCode) qs.set('code', oauthCode);
+            if (oauthState) qs.set('state', oauthState);
+            if (oauthError) qs.set('error', oauthError);
+            window.location.replace(`${API_URL}/auth/discord/callback?${qs.toString()}`);
+            return;
+        }
+
+        const params = new URLSearchParams((location.hash || '').replace(/^#/, ''));
+        const token = params.get('token');
+        const encodedUser = params.get('user');
+        const nextTarget = params.get('target') || '/';
+        const authError = params.get('error');
+
+        if (authError) {
+            setError(authError);
+            return;
+        }
+        if (!token || !encodedUser) {
+            setError('Discord sign-in did not return a valid session.');
+            return;
+        }
+
+        try {
+            const user = JSON.parse(decodeBase64Url(encodedUser));
+            localStorage.setItem('token', token);
+            localStorage.setItem('user', JSON.stringify(user));
+            window.dispatchEvent(new Event('user-updated'));
+            setMessage('Signed in. Redirecting...');
+            window.location.replace(nextTarget);
+        } catch (_err) {
+            setError('Discord sign-in response could not be parsed.');
+        }
+    }, [location.hash, location.search]);
+
+    return (
+        <div className="container" style={{ maxWidth: '520px', margin: '60px auto', padding: '20px' }}>
+            <div className="card" style={{ padding: '30px' }}>
+                <h2 style={{ marginTop: 0 }}>Discord Sign-In</h2>
+                {error ? (
+                    <>
+                        <div style={{ color: '#721c24', backgroundColor: '#f8d7da', padding: '12px 14px', borderRadius: '8px', marginBottom: '16px' }}>
+                            {error}
+                        </div>
+                        <Link to="/" style={{ color: '#007bff', textDecoration: 'none' }}>Return to home</Link>
+                    </>
+                ) : (
+                    <p style={{ margin: 0, color: '#555' }}>{message}</p>
                 )}
             </div>
         </div>
@@ -350,6 +463,7 @@ function App() {
                 <Routes>
                     {/* Standalone reset page — no app chrome */}
                     <Route path="/reset-password" element={<ResetPasswordPage />} />
+                    <Route path="/auth/discord/callback" element={<DiscordAuthCallback />} />
 
                     {/* Main app shell */}
                     <Route path="*" element={

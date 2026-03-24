@@ -1,5 +1,11 @@
 # Changelog / Roadmap
 
+## v0.3.3
+- Added Discord SSO with OAuth login, verified-email account linking, and callback handling for both `/api/auth/discord/callback` and `/auth/discord/callback`.
+- Added admin-managed Discord SSO settings in the Data tab, including an in-app setup guide and runtime enable/disable controls.
+- Added Discord avatar support across the signed-in header, admin users list, and leaderboard, with Gravatar fallback preserved.
+- Added persisted `discord_sso_settings` storage and Discord profile fields on users for avatar and account-link metadata.
+
 ## v0.3.2
 - Added optional branded logo support via Docker Compose and Helm (fallback to default icon).
 - Frontend now reads version from the image tag when provided.

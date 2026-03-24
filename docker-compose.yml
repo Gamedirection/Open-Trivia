@@ -60,6 +60,9 @@ services:
       - SMTP_PASS=${SMTP_PASS}
       # Displayed in the From: header. Defaults to noreply@<SMTP_HOST> if blank.
       - SMTP_FROM=${SMTP_USER} # noreply<@SMTP_HOST>
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID}
+      - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET}
+      - DISCORD_REDIRECT_URI=${DISCORD_REDIRECT_URI}
      # ── Common provider examples (uncomment and fill in one block) ────────────
 
       # Gmail (use an App Password, not your account password):
