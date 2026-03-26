@@ -1,3 +1,5 @@
+<img src="img/open-trivia-logo_OT-Logo+Mark.svg" />
+
 # Open-Trivia
 
 Created by [gamedirection.net](https://gamedirection.net) © 2026  
