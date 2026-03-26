@@ -1,4 +1,4 @@
-<img src="img/open-trivia-logo_OT-Logo+Mark.svg" />
+<img width="1325" height="380" alt="image"  src="img/open-trivia-logo_OT-Logo+Mark.svg" />
 
 # Open-Trivia
 
