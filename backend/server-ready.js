@@ -215,6 +215,54 @@ async function upsertDiscordUser(profile) {
     return normalizeUserRow(inserted.rows[0], privacy);
 }
 
+function buildDiscordOnlyEmail(discordId) {
+    return `discord-${String(discordId).trim()}@users.open-trivia.invalid`;
+}
+
+function resolveDiscordOnlyDisplayName(discordUsername, discordId) {
+    const value = String(discordUsername || '').trim() || `Discord Player ${String(discordId).trim()}`;
+    return value.slice(0, 60);
+}
+
+async function ensureDiscordTriviaUser({ discordUserId, discordUsername }) {
+    const discordId = String(discordUserId || '').trim();
+    if (!discordId) throw new Error('Discord user id is required');
+    const existing = await pool.query(
+        'SELECT id, role, blocked_until FROM users WHERE discord_id=$1 LIMIT 1',
+        [discordId]
+    );
+    if (existing.rows.length) return existing.rows[0];
+
+    try {
+        const inserted = await pool.query(
+            `INSERT INTO users (
+                email, password_hash, role, display_name, show_email, discord_id, discord_username, discord_avatar_url
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             RETURNING id, role, blocked_until`,
+            [
+                buildDiscordOnlyEmail(discordId),
+                await bcrypt.hash(makeFallbackPassword(), 10),
+                'player',
+                resolveDiscordOnlyDisplayName(discordUsername, discordId),
+                false,
+                discordId,
+                String(discordUsername || '').trim() || null,
+                null,
+            ]
+        );
+        return inserted.rows[0];
+    } catch (err) {
+        if (err.code === '23505') {
+            const retry = await pool.query(
+                'SELECT id, role, blocked_until FROM users WHERE discord_id=$1 LIMIT 1',
+                [discordId]
+            );
+            if (retry.rows.length) return retry.rows[0];
+        }
+        throw err;
+    }
+}
+
 function resolveShowEmail(userShowEmail, privacySettings) {
     if (userShowEmail === null || userShowEmail === undefined) {
         return !privacySettings.hide_emails_by_default;
@@ -2319,7 +2367,7 @@ app.post('/bot/trivia/questions', async (req, res) => {
     const mode = String(body.mode || 'public').trim().toLowerCase();
     const promptUserDiscordId = String(body.promptUserDiscordId || '').trim() || null;
     const count = Math.max(1, Math.min(20, parseInt(body.count, 10) || 1));
-    const closeAfterSeconds = Math.max(15, Math.min(600, parseInt(body.closeAfterSeconds, 10) || (mode === 'direct' ? 300 : 45)));
+    const closeAfterSeconds = Math.max(15, Math.min(604800, parseInt(body.closeAfterSeconds, 10) || 86400));
     let categoryId = body.categoryId ? parseInt(body.categoryId, 10) : null;
     const categoryName = String(body.categoryName || '').trim();
     try {
@@ -2400,7 +2448,7 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
     }
     try {
         const sessionRes = await pool.query(
-            `SELECT s.*, q.correct_answer, q.complexity, q.category_id
+            `SELECT s.*, q.correct_answer, q.complexity, q.category_id, q.option_a, q.option_b, q.option_c, q.option_d
              FROM discord_trivia_sessions s
              JOIN questions q ON q.id = s.question_id
              WHERE s.id=$1`,
@@ -2418,15 +2466,26 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
         const existing = await pool.query('SELECT id FROM discord_trivia_answers WHERE session_id=$1 AND discord_user_id=$2', [id, discordUserId]);
         if (existing.rows.length) return res.status(409).json({ error: 'User already answered' });
 
-        const userRes = await pool.query('SELECT id, role, blocked_until FROM users WHERE discord_id=$1 LIMIT 1', [discordUserId]);
-        const linkedUser = userRes.rows[0] || null;
+        const linkedUser = await ensureDiscordTriviaUser({
+            discordUserId,
+            discordUsername,
+        });
         if (linkedUser?.blocked_until && new Date(linkedUser.blocked_until) > new Date() && linkedUser.role !== 'admin') {
             return res.status(403).json({ error: 'Account is blocked', blocked_until: linkedUser.blocked_until });
         }
 
         const isCorrect = selectedAnswer === String(session.correct_answer || '').trim().toUpperCase();
         const scoring = await getScoringSettings();
-        const points = linkedUser && isCorrect ? computePoints(elapsedMs, session.complexity, scoring) : 0;
+        const points = isCorrect ? computePoints(elapsedMs, session.complexity, scoring) : 0;
+        const optionLookup = {
+            A: session.option_a,
+            B: session.option_b,
+            C: session.option_c,
+            D: session.option_d,
+        };
+        const correctAnswer = String(session.correct_answer || '').trim().toUpperCase();
+        const correctAnswerText = String(optionLookup[correctAnswer] || '').trim();
+        const correctAnswerLabel = correctAnswerText ? `${correctAnswer}: ${correctAnswerText}` : correctAnswer;
         const insert = await pool.query(
             `INSERT INTO discord_trivia_answers (
                 session_id, guild_id, channel_id, question_id, category_id, discord_user_id, discord_username, user_id, selected_answer, is_correct, points_awarded
@@ -2434,25 +2493,26 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
              RETURNING *`,
             [id, session.guild_id, session.channel_id, session.question_id, session.category_id, discordUserId, discordUsername, linkedUser?.id || null, selectedAnswer, isCorrect, points]
         );
-        if (linkedUser) {
-            await pool.query(
-                'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points,created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
-                [linkedUser.id, session.question_id, session.category_id, selectedAnswer, isCorrect, points]
-            );
-            if (points > 0) {
-                await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, linkedUser.id]);
-            }
-            adjustQuestionDifficulty(session.question_id, scoring).catch(() => {});
+        await pool.query(
+            'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points,created_at) VALUES ($1,$2,$3,$4,$5,$6,NOW())',
+            [linkedUser.id, session.question_id, session.category_id, selectedAnswer, isCorrect, points]
+        );
+        if (points > 0) {
+            await pool.query('UPDATE users SET score=score+$1 WHERE id=$2', [points, linkedUser.id]);
         }
+        adjustQuestionDifficulty(session.question_id, scoring).catch(() => {});
         const countRes = await pool.query('SELECT COUNT(*) FROM discord_trivia_answers WHERE session_id=$1', [id]);
         res.json({
             accepted: true,
             answer: insert.rows[0],
-            linked: !!linkedUser,
-            link_url: linkedUser ? null : buildDiscordLinkUrl('/'),
+            linked: true,
+            link_url: null,
             is_correct: isCorrect,
             points_awarded: points,
             answered_count: parseInt(countRes.rows[0].count, 10) || 0,
+            correct_answer: correctAnswer,
+            correct_answer_text: correctAnswerText,
+            correct_answer_label: correctAnswerLabel,
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

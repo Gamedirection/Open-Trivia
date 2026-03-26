@@ -125,7 +125,7 @@ services:
       - BOT_PUBLIC_APP_URL=${PUBLIC_APP_URL:-http://localhost:3000}
       - BOT_STORAGE_PATH=/tmp/open-trivia-discord-state.json
       - BOT_SCHEDULE_POLL_MS=${BOT_SCHEDULE_POLL_MS:-15000}
-      - BOT_QUESTION_TIMEOUT_SECONDS=${BOT_QUESTION_TIMEOUT_SECONDS:-60}
+      - BOT_QUESTION_TIMEOUT_SECONDS=${BOT_QUESTION_TIMEOUT_SECONDS:-86400}
 
   #swaggerui:
   #  image: swaggerapi/swagger-ui:latest

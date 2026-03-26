@@ -1,5 +1,11 @@
 # Changelog / Roadmap
 
+## v0.3.5
+- Increased the Discord bot default trivia timeout to 24 hours and aligned the root Docker Compose and env defaults with that behavior.
+- Expired Discord trivia messages are now deleted after timeout instead of remaining in-channel.
+- Incorrect Discord answers now reveal the correct answer privately to the player.
+- Discord users who answer through the bot are now auto-created in Open-Trivia so their scores can be recorded without prior site login.
+
 ## v0.3.4
 - Added the Discord Bot admin settings card and bot settings APIs to the deployed backend/frontend flow, including enable/disable, bot token, service URL, and public app URL controls.
 - Added refreshed backend/frontend GHCR images so production deployments can pick up the Discord bot admin configuration UI.
