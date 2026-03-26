@@ -25,6 +25,8 @@ const getUserAvatarUrl = (user, size = 48) => {
     return '';
 };
 
+const getFilledOptionKeys = (options) => ['A', 'B', 'C', 'D'].filter((key) => String(options[key] || '').trim());
+
 const Toast = ({ msg }) => msg ? (
     <div style={{
         padding: '12px 18px', marginBottom: '18px', borderRadius: '8px',
@@ -52,6 +54,16 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
         if (!initial.category_id && categories.length > 0) setCatId(categories[0].id);
     }, [categories]);
 
+    const optionMap = { A: optA, B: optB, C: optC, D: optD };
+    const filledOptionKeys = getFilledOptionKeys(optionMap);
+    const usesFourOptions = filledOptionKeys.includes('C') || filledOptionKeys.includes('D');
+
+    useEffect(() => {
+        if (!filledOptionKeys.includes(correct)) {
+            setCorrect(filledOptionKeys[0] || 'A');
+        }
+    }, [correct, filledOptionKeys]);
+
     const iStyle = {
         width: '100%', boxSizing: 'border-box', padding: '8px 10px',
         borderRadius: '6px', border: '1px solid var(--border-color)',
@@ -59,8 +71,13 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
     };
 
     const handleSubmit = () => {
-        if (!text.trim() || !optA.trim() || !optB.trim() || !optC.trim() || !optD.trim())
-            return alert('Please fill in all fields.');
+        if (!text.trim() || !optA.trim() || !optB.trim())
+            return alert('Option A and Option B are required.');
+        const hasC = !!optC.trim();
+        const hasD = !!optD.trim();
+        if (hasC !== hasD) {
+            return alert('Use either 2 options or 4 options. Option C and Option D must both be filled or both be blank.');
+        }
         if (!catId) return alert('Select a category first.');
         onSubmit({
             categoryId: Number(catId),
@@ -147,15 +164,20 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 {[['A', optA, setOptA], ['B', optB, setOptB], ['C', optC, setOptC], ['D', optD, setOptD]].map(([lbl, val, set]) => (
                     <div key={lbl}>
-                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Option {lbl}</label>
+                        <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>
+                            Option {lbl}{(lbl === 'A' || lbl === 'B') ? '' : ' (optional)'}
+                        </label>
                         <input value={val} onChange={e => set(e.target.value)} style={iStyle} placeholder={`Option ${lbl}...`} />
                     </div>
                 ))}
             </div>
+            <div style={{ fontSize: '12px', color: '#666' }}>
+                Questions can have 2 answers or 4 answers. Option A and Option B are required. Option C and Option D must both be filled or both be left blank.
+            </div>
             <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
                 <div>
                     <strong style={{ fontSize: '13px' }}>Correct: </strong>
-                    {['A','B','C','D'].map(c => (
+                    {(usesFourOptions ? ['A', 'B', 'C', 'D'] : ['A', 'B']).map(c => (
                         <label key={c} style={{ marginLeft: '10px', cursor: 'pointer', fontSize: '14px' }}>
                             <input type="radio" name={`correct-${submitLabel}`} value={c}
                                 checked={correct === c} onChange={e => setCorrect(e.target.value)} /> {c}
@@ -980,6 +1002,7 @@ export default function Admin() {
                                     From <strong>{q.submitted_by_email || 'anonymous'}</strong> · {new Date(q.submitted_at).toLocaleDateString()}
                                 </span>
                                 <div style={{ display: 'flex', gap: '6px' }}>
+                                    {q.submitted_via === 'discord_bot' && <Badge color="#5865F2" text="Discord Bot" />}
                                     <Badge color="#6c757d" text={q.category_name} />
                                     <Badge color={diffColor[q.complexity] || '#6c757d'} text={q.complexity} />
                                 </div>

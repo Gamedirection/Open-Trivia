@@ -19,6 +19,17 @@ export default function RequestCardModal({ onClose }) {
     const [success, setSuccess]       = useState(false);
 
     const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }));
+    const filledOptionKeys = ['A', 'B', 'C', 'D'].filter((key) => {
+        const field = `option${key}`;
+        return String(form[field] || '').trim();
+    });
+    const usesFourOptions = filledOptionKeys.includes('C') || filledOptionKeys.includes('D');
+
+    useEffect(() => {
+        if (!filledOptionKeys.includes(form.correctAnswer)) {
+            setForm((f) => ({ ...f, correctAnswer: filledOptionKeys[0] || 'A' }));
+        }
+    }, [filledOptionKeys, form.correctAnswer]);
 
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -26,8 +37,13 @@ export default function RequestCardModal({ onClose }) {
             ? customCategory.trim()
             : (categories.find(c => String(c.id) === String(selectedCategoryId))?.name || form.categoryName.trim());
         const { text, optionA, optionB, optionC, optionD } = form;
-        if (!chosenCategory || !text.trim() || !optionA.trim() || !optionB.trim() || !optionC.trim() || !optionD.trim())
-            return alert('Please fill in all fields.');
+        if (!chosenCategory || !text.trim() || !optionA.trim() || !optionB.trim())
+            return alert('Category, question, Option A, and Option B are required.');
+        const hasC = !!optionC.trim();
+        const hasD = !!optionD.trim();
+        if (hasC !== hasD) {
+            return alert('Use either 2 options or 4 options. Option C and Option D must both be filled or both be blank.');
+        }
 
         setSubmitting(true);
         try {
@@ -156,15 +172,20 @@ export default function RequestCardModal({ onClose }) {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                             {[['optionA','A'],['optionB','B'],['optionC','C'],['optionD','D']].map(([field, lbl]) => (
                                 <div key={lbl}>
-                                    <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Option {lbl}</label>
-                                    <input value={form[field]} onChange={set(field)} placeholder={`Option ${lbl}...`} required style={iStyle} />
+                                    <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>
+                                        Option {lbl}{(lbl === 'A' || lbl === 'B') ? '' : ' (optional)'}
+                                    </label>
+                                    <input value={form[field]} onChange={set(field)} placeholder={`Option ${lbl}...`} style={iStyle} />
                                 </div>
                             ))}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#666' }}>
+                            Questions can have 2 answers or 4 answers. Option A and Option B are required. Option C and Option D must both be filled or both be left blank.
                         </div>
                         <div style={{ display: 'flex', gap: '24px', flexWrap: 'wrap', alignItems: 'center' }}>
                             <div>
                                 <strong style={{ fontSize: '13px' }}>Correct: </strong>
-                                {['A','B','C','D'].map(c => (
+                                {(usesFourOptions ? ['A', 'B', 'C', 'D'] : ['A', 'B']).map(c => (
                                     <label key={c} style={{ marginLeft: '10px', cursor: 'pointer', fontSize: '14px' }}>
                                         <input type="radio" name="modalCorrect" value={c}
                                             checked={form.correctAnswer === c} onChange={set('correctAnswer')} /> {c}

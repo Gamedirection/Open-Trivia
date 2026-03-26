@@ -1,5 +1,11 @@
 # Changelog / Roadmap
 
+## v0.3.11
+- Added support for two-answer or four-answer questions across admin question creation, user suggestions, and backend validation.
+- Added Discord bot question suggestions through `/suggest-question`, sending requests into the admin review queue.
+- Flagged Discord-submitted review items in the admin Review Queue with a `Discord Bot` badge.
+- Removed `A/B/C/D` prefixes from Discord answer buttons so they display only the answer text.
+
 ## v0.3.10
 - Added dedicated Discord scoring defaults in admin scoring settings, with fixed per-difficulty values that ignore answer timing.
 - Set default Discord trivia scoring to Easy `+5`, Medium `+10`, and Hard `+15`, while keeping site gameplay on the existing time-based scoring model.

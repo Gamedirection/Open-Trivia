@@ -54,6 +54,7 @@ async function initDB() {
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id),
                 submitted_by_email VARCHAR(255) DEFAULT 'anonymous',
+                submitted_via VARCHAR(32) DEFAULT 'site',
                 category_name VARCHAR(100) NOT NULL,
                 text TEXT NOT NULL,
                 option_a TEXT NOT NULL,

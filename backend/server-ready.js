@@ -301,6 +301,32 @@ function compactQuestionOptions(options) {
         .filter((option) => option.char && option.text);
 }
 
+function normalizeSubmittedQuestionOptions(options, correctAnswer) {
+    const normalized = {
+        a: String(options?.a || '').trim(),
+        b: String(options?.b || '').trim(),
+        c: String(options?.c || '').trim(),
+        d: String(options?.d || '').trim(),
+    };
+    if (!normalized.a || !normalized.b) {
+        return { error: 'Option A and Option B are required' };
+    }
+    const hasC = !!normalized.c;
+    const hasD = !!normalized.d;
+    if (hasC !== hasD) {
+        return { error: 'Use either 2 options or 4 options. Option C and Option D must both be filled or both be blank.' };
+    }
+    const allowedAnswers = hasC && hasD ? ['A', 'B', 'C', 'D'] : ['A', 'B'];
+    const normalizedCorrectAnswer = String(correctAnswer || '').trim().toUpperCase().slice(0, 1);
+    if (!allowedAnswers.includes(normalizedCorrectAnswer)) {
+        return { error: `Correct answer must be one of: ${allowedAnswers.join(', ')}` };
+    }
+    return {
+        options: normalized,
+        correctAnswer: normalizedCorrectAnswer,
+    };
+}
+
 function isAllowedImageUrl(url) {
     if (!url) return false;
     const isHttp = /^https?:\/\//i.test(url);
@@ -852,6 +878,7 @@ async function initDatabase() {
                 id SERIAL PRIMARY KEY,
                 user_id INT REFERENCES users(id),
                 submitted_by_email VARCHAR(255) DEFAULT 'anonymous',
+                submitted_via VARCHAR(32) DEFAULT 'site',
                 category_name VARCHAR(100) NOT NULL,
                 text TEXT NOT NULL,
                 option_a TEXT NOT NULL,
@@ -1032,6 +1059,7 @@ async function initDatabase() {
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
+            `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_via VARCHAR(32) DEFAULT 'site'`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
             `ALTER TABLE question_reports ADD COLUMN IF NOT EXISTS reported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS is_anonymous BOOLEAN DEFAULT FALSE`,
@@ -1463,7 +1491,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         users: ['id','email','password_hash','role','score','is_anonymous','blocked_until','blocked_reason','display_name','show_email','discord_id','discord_username','discord_avatar_url'],
         categories: ['id','name'],
         questions: ['id','category_id','text','option_a','option_b','option_c','option_d','correct_answer','complexity','disabled','image_url'],
-        pending_questions: ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'],
+        pending_questions: ['id','user_id','submitted_by_email','submitted_via','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'],
         game_sessions: ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'],
         question_reports: ['id','question_id','reason','reported_at'],
         score_resets: ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'],
@@ -1794,6 +1822,8 @@ app.post('/questions', async (req, res) => {
     if (!categoryId || !text || !options || !correctAnswer || !complexity)
         return res.status(400).json({ error: 'All fields required' });
     try {
+        const normalizedQuestion = normalizeSubmittedQuestionOptions(options, correctAnswer);
+        if (normalizedQuestion.error) return res.status(400).json({ error: normalizedQuestion.error });
         const catCheck = await pool.query('SELECT id FROM categories WHERE id=$1', [categoryId]);
         if (!catCheck.rows.length) return res.status(400).json({ error: `Category ${categoryId} not found` });
         const normalizedImageUrl = normalizeImageUrl(imageUrl);
@@ -1806,7 +1836,7 @@ app.post('/questions', async (req, res) => {
         const r = await runQuery(
             `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl]
+            [categoryId, text, normalizedQuestion.options.a, normalizedQuestion.options.b, normalizedQuestion.options.c, normalizedQuestion.options.d, normalizedQuestion.correctAnswer, complexity, normalizedImageUrl]
         );
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -1816,6 +1846,8 @@ app.put('/questions/:id', async (req, res) => {
     if (!requireAdmin(req, res)) return;
     const { categoryId, text, options, correctAnswer, complexity, imageUrl } = req.body;
     try {
+        const normalizedQuestion = normalizeSubmittedQuestionOptions(options, correctAnswer);
+        if (normalizedQuestion.error) return res.status(400).json({ error: normalizedQuestion.error });
         const normalizedImageUrl = normalizeImageUrl(imageUrl);
         if (normalizedImageUrl) {
             const imgSettings = await getImageSettings();
@@ -1826,7 +1858,7 @@ app.put('/questions/:id', async (req, res) => {
         const r = await runQuery(
             `UPDATE questions SET category_id=$1,text=$2,option_a=$3,option_b=$4,option_c=$5,
              option_d=$6,correct_answer=$7,complexity=$8,image_url=$9 WHERE id=$10 RETURNING *`,
-            [categoryId, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl, req.params.id]
+            [categoryId, text, normalizedQuestion.options.a, normalizedQuestion.options.b, normalizedQuestion.options.c, normalizedQuestion.options.d, normalizedQuestion.correctAnswer, complexity, normalizedImageUrl, req.params.id]
         );
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2244,6 +2276,41 @@ app.get('/bot/categories', async (req, res) => {
     try {
         const r = await pool.query('SELECT id, name FROM categories ORDER BY name ASC');
         res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/pending-questions', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const body = req.body || {};
+    const categoryName = String(body.categoryName || '').trim();
+    const text = String(body.text || '').trim();
+    const complexity = String(body.complexity || 'medium').trim().toLowerCase();
+    const submittedBy = String(body.submittedBy || '').trim() || 'discord-bot';
+    const imageUrl = normalizeImageUrl(body.imageUrl);
+    try {
+        const normalizedQuestion = normalizeSubmittedQuestionOptions(body.options || {}, body.correctAnswer);
+        if (!categoryName || !text || !complexity) {
+            return res.status(400).json({ error: 'categoryName, text, and complexity are required' });
+        }
+        if (normalizedQuestion.error) return res.status(400).json({ error: normalizedQuestion.error });
+        if (!['easy', 'medium', 'hard'].includes(complexity)) {
+            return res.status(400).json({ error: 'complexity must be easy, medium, or hard' });
+        }
+        if (imageUrl) {
+            const imgSettings = await getImageSettings();
+            const maxKb = Number(imgSettings.max_image_kb) || 0;
+            const chk = await validateImageUrl(imageUrl, maxKb);
+            if (!chk.ok) return res.status(400).json({ error: chk.error });
+        }
+        const inserted = await runQuery(
+            `INSERT INTO pending_questions
+             (user_id, submitted_by_email, submitted_via, category_name, text, option_a, option_b, option_c, option_d, correct_answer, complexity, image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             RETURNING *`,
+            [null, submittedBy, 'discord_bot', categoryName, text, normalizedQuestion.options.a, normalizedQuestion.options.b, normalizedQuestion.options.c, normalizedQuestion.options.d, normalizedQuestion.correctAnswer, complexity, imageUrl]
+        );
+        res.json(inserted.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -2861,6 +2928,8 @@ app.post('/pending-questions', async (req, res) => {
     if (!categoryName || !text || !options || !correctAnswer || !complexity)
         return res.status(400).json({ error: 'All fields required' });
     try {
+        const normalizedQuestion = normalizeSubmittedQuestionOptions(options, correctAnswer);
+        if (normalizedQuestion.error) return res.status(400).json({ error: normalizedQuestion.error });
         const limits = await getRateLimitSettings();
         let email = 'anonymous';
         let userId = null;
@@ -2902,9 +2971,9 @@ app.post('/pending-questions', async (req, res) => {
         }
         await runQuery(
             `INSERT INTO pending_questions
-             (user_id,submitted_by_email,category_name,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-            [userId, email, categoryName, text, options.a, options.b, options.c, options.d, correctAnswer, complexity, normalizedImageUrl]
+             (user_id,submitted_by_email,submitted_via,category_name,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            [userId, email, 'site', categoryName, text, normalizedQuestion.options.a, normalizedQuestion.options.b, normalizedQuestion.options.c, normalizedQuestion.options.d, normalizedQuestion.correctAnswer, complexity, normalizedImageUrl]
         );
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -3716,7 +3785,7 @@ app.post('/admin/backup/restore-user', async (req, res) => {
 
             await restoreRows('game_sessions', ['id','user_id','question_id','category_id','selected_answer','is_correct','points','created_at'], games);
             await restoreRows('score_resets', ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'], resets);
-            await restoreRows('pending_questions', ['id','user_id','submitted_by_email','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'], pending);
+            await restoreRows('pending_questions', ['id','user_id','submitted_by_email','submitted_via','category_name','text','option_a','option_b','option_c','option_d','correct_answer','complexity','image_url','submitted_at','status'], pending);
 
             await client.query('COMMIT');
         } catch (err) {

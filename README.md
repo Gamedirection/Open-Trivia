@@ -12,6 +12,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 ## Key Features
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
+- Discord users can submit question suggestions directly from the bot for admin approval.
 - Public Terms of Use and Privacy Policy pages with deployment-configurable operator/contact identity.
 - Question answers now collapse blank slots automatically so True/False style questions render as two full-width answers instead of four sparse buttons.
 - Leaderboards with category and timeframe filters (day/month/year).
@@ -22,6 +23,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Profile & privacy: display name edits, email visibility toggle, optional avatar display, Discord avatar preference when linked.
 - Question images by URL or admin uploads (png/jpg/jpeg/svg/webp).
 - User suggestions can include image URLs.
+- Questions can use either 2 answers or 4 answers.
 - Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip, GitHub, or a GitHub release asset URL.
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
@@ -74,8 +76,9 @@ BOT_SCHEDULE_POLL_MS=15000
 BOT_QUESTION_TIMEOUT_SECONDS=86400
 ```
 
-The bot lives in `services/open-trivia-discord` as a submodule. Configure the bot token/client ID in `.env`, start the `discord-bot` service, then use `/ot`, `/leaderboard`, and `/otschedule` in Discord.
+The bot lives in `services/open-trivia-discord` as a submodule. Configure the bot token/client ID in `.env`, start the `discord-bot` service, then use `/trivia`, `/leaderboard`, `/schedule-trivia`, and `/suggest-question` in Discord.
 The bot also supports `/categories` and `/help`, scheduler commands can target an optional category plus a selected Discord channel, incorrect Discord answers reveal the correct answer privately, and Discord-only players are created automatically in Open-Trivia on first answer so they can score immediately.
+Question suggestions submitted through Discord are flagged in the admin Review Queue as coming from the Discord bot.
 The admin Data section also exposes a Discord bot invite URL, defaulting to the configured Discord application authorization link.
 
 ### Scoring Config (optional)
