@@ -5,6 +5,7 @@ import Admin from './Admin';
 import Leaderboard from './Leaderboard';
 import ResetPasswordPage from './ResetPasswordPage';
 import Dashboard from './Dashboard';
+import { PrivacyPolicyPage, TermsOfUsePage } from './LegalPage';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import { gravatarUrl } from './utils/gravatar';
 import { BRAND_LOGO_URL, DISPLAY_VERSION } from './branding';
@@ -486,25 +487,37 @@ function App() {
                                 <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/" replace />} />
                                 <Route path="/leaderboard" element={<Leaderboard />} />
                                 <Route path="/admin" element={user?.role === 'admin' ? <Admin /> : <Navigate to="/" replace />} />
+                                <Route path="/terms" element={<TermsOfUsePage />} />
+                                <Route path="/privacy" element={<PrivacyPolicyPage />} />
                             </Routes>
 
                             <footer style={{ textAlign: 'center', marginTop: '50px', color: '#888', fontSize: '0.9rem' }}>
-                                <p style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '6px' }}>Open-Trivia</p>
-                                <p style={{ margin: '6px 0 0' }}>
-                                    Created by <a href="https://gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>gamedirection.net © 2026</a>
+                                <a
+                                    href="https://gamedirection.net"
+                                    style={{ display: 'inline-block', textDecoration: 'none' }}
+                                    aria-label="Open-Trivia by GameDirection"
+                                >
+                                    <img
+                                        src={BRAND_LOGO_URL}
+                                        alt="Open-Trivia"
+                                        style={{
+                                            display: 'block',
+                                            width: '100%',
+                                            maxWidth: '200px',
+                                            height: 'auto',
+                                            margin: '0 auto'
+                                        }}
+                                    />
+                                </a>
+                                <p style={{ margin: '10px 0 0' }}>
+                                    <a href="https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md" style={{ color: '#007bff', textDecoration: 'none' }}>
+                                        {DISPLAY_VERSION}
+                                    </a>
                                 </p>
-                                <p style={{ margin: '6px 0 0' }}>
-                                    Discord: <a href="https://join.gamedirection.net" style={{ color: '#007bff', textDecoration: 'none' }}>join.gamedirection.net</a>
-                                </p>
-                                <p style={{ margin: '6px 0 0' }}>
-                                    GitHub: <a href="https://github.com/Gamedirection/Open-Trivia" style={{ color: '#007bff', textDecoration: 'none' }}>github.com/Gamedirection/Open-Trivia</a>
-                                </p>
-                                <p style={{ margin: '6px 0 0' }}>
-                                    License: <a href="https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE" style={{ color: '#007bff', textDecoration: 'none' }}>LICENSE</a>
-                                </p>
-                                <p style={{ margin: '6px 0 0' }}>
-                                    Version: <a href="https://github.com/Gamedirection/Open-Trivia/blob/main/docs/CHANGELOG.md" style={{ color: '#007bff', textDecoration: 'none' }}>{DISPLAY_VERSION}</a>
-                                </p>
+                                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center', gap: '18px', flexWrap: 'wrap' }}>
+                                    <Link to="/terms" style={{ color: '#007bff', textDecoration: 'none' }}>Terms of Use</Link>
+                                    <Link to="/privacy" style={{ color: '#007bff', textDecoration: 'none' }}>Privacy Policy</Link>
+                                </div>
 
                                 <details style={{ marginTop: '12px' }}>
                                     <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Creditation</summary>

@@ -12,6 +12,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 ## Key Features
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
+- Public Terms of Use and Privacy Policy pages with deployment-configurable operator/contact identity.
 - Question answers now collapse blank slots automatically so True/False style questions render as two full-width answers instead of four sparse buttons.
 - Leaderboards with category and timeframe filters (day/month/year).
 - Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries, Discord avatars with Gravatar fallback.
@@ -46,6 +47,9 @@ PG_PASSWORD=trivia_pass
 PG_DB=trivia_db
 JWT_SECRET=change-me
 APP_URL=http://localhost:3000
+LEGAL_OPERATOR_NAME=
+LEGAL_CONTACT_EMAIL=
+LEGAL_LAST_UPDATED=2026-03-25
 ```
 
 ### Discord SSO (optional)
@@ -93,6 +97,7 @@ DIFF_DOWN_THRESHOLD=0.8
 - Admin image uploads for questions.
 - Category pack export/import (zip, GitHub, or release asset URL) + template download.
 - Data section: backups/export/import plus Discord SSO and Discord bot configuration with setup guidance.
+- Public legal pages: `/terms` and `/privacy`, with operator/contact details derived from the site domain unless overridden by env.
 
 ## Shared Collections
 Community packs can be browsed at `questions.trivia.gamedirection.net`.  
