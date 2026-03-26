@@ -6,6 +6,8 @@ Created by [gamedirection.net](https://gamedirection.net) © 2026
 Discord: [join.gamedirection.net](https://join.gamedirection.net)  
 Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 
+## Try it out at [Trivia.GameDirection.net](https://trivia.gamedirection.net)
+
 ## Overview
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
 
