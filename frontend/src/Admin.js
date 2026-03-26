@@ -237,7 +237,7 @@ function ResetPasswordModal({ user, onClose, onSuccess, flash }) {
 
 // ─── Main Admin Component ──────────────────────────────────────────────────────
 export default function Admin() {
-    const [tab, setTab]               = useState('questions');
+    const [tab, setTab]               = useState('review');
     const [toast, setToast]           = useState('');
     const [categories, setCategories] = useState([]);
     const [selCat, setSelCat]         = useState(null);
