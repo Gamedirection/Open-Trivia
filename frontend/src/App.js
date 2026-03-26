@@ -514,10 +514,15 @@ function App() {
                                         {DISPLAY_VERSION}
                                     </a>
                                 </p>
-                                <div style={{ marginTop: '10px', display: 'flex', justifyContent: 'center', gap: '18px', flexWrap: 'wrap' }}>
-                                    <Link to="/terms" style={{ color: '#007bff', textDecoration: 'none' }}>Terms of Use</Link>
-                                    <Link to="/privacy" style={{ color: '#007bff', textDecoration: 'none' }}>Privacy Policy</Link>
-                                </div>
+                                <p style={{ margin: '10px 0 0' }}>
+                                    <a href="https://raw.githubusercontent.com/Gamedirection/Open-Trivia/refs/heads/main/LICENSE" style={{ color: '#007bff', textDecoration: 'none' }}>
+                                        License
+                                    </a>
+                                    {' | '}
+                                    <Link to="/terms" style={{ color: '#007bff', textDecoration: 'none' }}>TOS</Link>
+                                    {' | '}
+                                    <Link to="/privacy" style={{ color: '#007bff', textDecoration: 'none' }}>Privacy</Link>
+                                </p>
 
                                 <details style={{ marginTop: '12px' }}>
                                     <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Creditation</summary>
