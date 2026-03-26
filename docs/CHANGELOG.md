@@ -5,6 +5,8 @@
 - Set default Discord trivia scoring to Easy `+5`, Medium `+10`, and Hard `+15`, while keeping site gameplay on the existing time-based scoring model.
 - Updated Discord answer responses to include the difficulty and awarded points, such as `Correct. This Medium question was +10 points.`
 - Defaulted the admin panel to open on the Review Queue tab instead of Questions.
+- Updated the Discord bot to display question images when a trivia item includes one.
+- Improved Discord scheduler command handling and empty-list channel messaging.
 
 ## v0.3.6
 - Added public Terms of Use and Privacy Policy pages to the frontend.
