@@ -67,6 +67,7 @@ Set the Discord application redirect URI to the same callback URL you configure 
 DISCORD_BOT_API_TOKEN=change-me-bot-token
 PUBLIC_APP_URL=http://localhost:3000
 DISCORD_BOT_SERVICE_URL=http://discord-bot:3000
+DISCORD_BOT_INVITE_URL=https://discord.com/oauth2/authorize?client_id=1485851351366766755
 BOT_DISCORD_TOKEN=your-discord-bot-token
 BOT_DISCORD_CLIENT_ID=your-discord-bot-client-id
 BOT_SCHEDULE_POLL_MS=15000
@@ -75,6 +76,7 @@ BOT_QUESTION_TIMEOUT_SECONDS=86400
 
 The bot lives in `services/open-trivia-discord` as a submodule. Configure the bot token/client ID in `.env`, start the `discord-bot` service, then use `/ot`, `/leaderboard`, and `/otschedule` in Discord.
 The bot also supports `/categories` and `/help`, scheduler commands can target an optional category plus a selected Discord channel, incorrect Discord answers reveal the correct answer privately, and Discord-only players are created automatically in Open-Trivia on first answer so they can score immediately.
+The admin Data section also exposes a Discord bot invite URL, defaulting to the configured Discord application authorization link.
 
 ### Scoring Config (optional)
 ```bash

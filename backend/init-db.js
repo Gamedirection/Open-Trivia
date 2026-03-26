@@ -161,6 +161,7 @@ async function initDB() {
                 api_token TEXT,
                 public_app_url TEXT,
                 service_url TEXT,
+                invite_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 

@@ -647,6 +647,7 @@ export default function Admin() {
                 api_token: discordBot.api_token || '',
                 public_app_url: discordBot.public_app_url || '',
                 service_url: discordBot.service_url || '',
+                invite_url: discordBot.invite_url || '',
             }, authCfg());
             setDiscordBot(r.data);
             flash(r.data.active ? '✅ Discord bot settings saved and active' : '✅ Discord bot settings saved');
@@ -1448,6 +1449,19 @@ export default function Admin() {
                                     </div>
                                 </div>
 
+                                <div>
+                                    <label style={{ fontSize: '12px', color: '#888' }}>Discord Bot Invite URL</label>
+                                    <input
+                                        value={discordBot.invite_url || ''}
+                                        onChange={e => setDiscordBot({ ...discordBot, invite_url: e.target.value })}
+                                        placeholder="https://discord.com/oauth2/authorize?client_id=1485851351366766755"
+                                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                    />
+                                    <div style={{ fontSize: '11px', color: '#888', marginTop: '4px' }}>
+                                        Link used to add the Discord bot to a server.
+                                    </div>
+                                </div>
+
                                 <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
                                     <button className="btn btn-primary" onClick={saveDiscordBotSettings} disabled={discordBotSaving}>
                                         {discordBotSaving ? 'Saving...' : 'Save Discord Bot Settings'}
@@ -1464,7 +1478,11 @@ export default function Admin() {
                                 <details style={{ marginTop: '4px' }}>
                                     <summary style={{ cursor: 'pointer', fontWeight: 'bold' }}>Bot Setup Instructions</summary>
                                     <div style={{ marginTop: '10px', fontSize: '13px', color: '#555', display: 'grid', gap: '8px' }}>
-                                        <div>1. Invite the Discord bot application to your server with message, slash-command, and button permissions.</div>
+                                        <div>
+                                            1. Invite the Discord bot application to your server with message, slash-command, and button permissions.
+                                            {' '}
+                                            <a href={discordBot.invite_url || 'https://discord.com/oauth2/authorize?client_id=1485851351366766755'} target="_blank" rel="noreferrer">Add bot to server</a>
+                                        </div>
                                         <div>2. Set the same Bot API token here and in the bot service environment.</div>
                                         <div>3. Set the Public App URL to your Open-Trivia site so the bot can send account-link prompts.</div>
                                         <div>4. Enable Discord bot integration here, then start the bot service from the `services/open-trivia-discord` submodule.</div>

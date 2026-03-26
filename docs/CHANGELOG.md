@@ -4,6 +4,7 @@
 - Added public Terms of Use and Privacy Policy pages to the frontend.
 - Added env/runtime-config support for deployment-specific legal operator, contact, site URL, and policy effective date values.
 - Linked the new legal pages from the app footer and populated them with product-specific disclosures covering account data, Discord integrations, backups, audit logs, privacy controls, and security practices.
+- Added a configurable Discord bot invite URL in the admin Data section, with an env default pointing at the Discord application authorization link.
 
 ## v0.3.5
 - Increased the Discord bot default trivia timeout to 24 hours and aligned the root Docker Compose and env defaults with that behavior.

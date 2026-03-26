@@ -66,6 +66,12 @@ function normalizeBotBaseUrl(url) {
     return normalizeExternalBaseUrl(url, 'http://localhost:3000');
 }
 
+function normalizeInviteUrl(url) {
+    return normalizeExternalBaseUrl(
+        url || 'https://discord.com/oauth2/authorize?client_id=1485851351366766755'
+    );
+}
+
 function buildPublicAppUrl(pathname = '/') {
     const explicit = normalizeBotBaseUrl(process.env.PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000');
     const nextPath = pathname.startsWith('/') ? pathname : `/${pathname}`;
@@ -739,6 +745,7 @@ async function getDiscordBotSettings() {
         api_token: String(process.env.DISCORD_BOT_API_TOKEN || '').trim(),
         public_app_url: normalizeBotBaseUrl(process.env.PUBLIC_APP_URL || process.env.APP_URL || 'http://localhost:3000'),
         service_url: normalizeBotBaseUrl(process.env.DISCORD_BOT_SERVICE_URL || ''),
+        invite_url: normalizeInviteUrl(process.env.DISCORD_BOT_INVITE_URL || 'https://discord.com/oauth2/authorize?client_id=1485851351366766755'),
     };
     const r = await pool.query('SELECT * FROM discord_bot_settings ORDER BY id DESC LIMIT 1');
     const row = r.rows[0] || {};
@@ -747,6 +754,7 @@ async function getDiscordBotSettings() {
         api_token: String(row.api_token || envSettings.api_token || '').trim(),
         public_app_url: normalizeBotBaseUrl(row.public_app_url || envSettings.public_app_url),
         service_url: normalizeBotBaseUrl(row.service_url || envSettings.service_url),
+        invite_url: normalizeInviteUrl(row.invite_url || envSettings.invite_url),
         updated_at: row.updated_at || null,
     };
     merged.configured = !!merged.api_token;
@@ -919,6 +927,7 @@ async function initDatabase() {
                 api_token TEXT,
                 public_app_url TEXT,
                 service_url TEXT,
+                invite_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS discord_trivia_schedules (
@@ -1085,8 +1094,10 @@ async function initDatabase() {
                 api_token TEXT,
                 public_app_url TEXT,
                 service_url TEXT,
+                invite_url TEXT,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `ALTER TABLE discord_bot_settings ADD COLUMN IF NOT EXISTS invite_url TEXT`,
             `CREATE TABLE IF NOT EXISTS discord_trivia_schedules (
                 id SERIAL PRIMARY KEY,
                 guild_id VARCHAR(64) NOT NULL,
@@ -1427,7 +1438,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','open_trivia_db_enabled','skip_per_hour','updated_at'],
         image_settings: ['id','max_image_kb','updated_at'],
         discord_sso_settings: ['id','enabled','client_id','client_secret','redirect_uri','updated_at'],
-        discord_bot_settings: ['id','enabled','api_token','public_app_url','service_url','updated_at'],
+        discord_bot_settings: ['id','enabled','api_token','public_app_url','service_url','invite_url','updated_at'],
         discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','daily_time','enabled','next_run','last_run','created_at'],
         discord_trivia_sessions: ['id','guild_id','channel_id','message_id','question_id','category_id','mode','prompt_user_discord_id','close_after_seconds','closes_at','closed_at','created_at'],
         discord_trivia_answers: ['id','session_id','guild_id','channel_id','question_id','category_id','discord_user_id','discord_username','user_id','selected_answer','is_correct','points_awarded','answered_at'],
@@ -3113,12 +3124,13 @@ app.post('/admin/discord-bot-settings', async (req, res) => {
             api_token: String(body.api_token ?? current.api_token ?? '').trim(),
             public_app_url: normalizeBotBaseUrl(body.public_app_url ?? current.public_app_url ?? buildPublicAppUrl('/')),
             service_url: normalizeBotBaseUrl(body.service_url ?? current.service_url ?? ''),
+            invite_url: normalizeInviteUrl(body.invite_url ?? current.invite_url ?? 'https://discord.com/oauth2/authorize?client_id=1485851351366766755'),
         };
         const inserted = await pool.query(
-            `INSERT INTO discord_bot_settings (enabled, api_token, public_app_url, service_url)
-             VALUES ($1,$2,$3,$4)
+            `INSERT INTO discord_bot_settings (enabled, api_token, public_app_url, service_url, invite_url)
+             VALUES ($1,$2,$3,$4,$5)
              RETURNING *`,
-            [next.enabled, next.api_token || null, next.public_app_url || null, next.service_url || null]
+            [next.enabled, next.api_token || null, next.public_app_url || null, next.service_url || null, next.invite_url || null]
         );
         const effective = await getDiscordBotSettingsSnapshot();
         await auditLog(admin.id, 'DISCORD_BOT_SETTINGS_UPDATE', `enabled=${effective.enabled} configured=${effective.configured}`);

@@ -71,6 +71,7 @@ services:
       - DISCORD_BOT_API_TOKEN=${DISCORD_BOT_API_TOKEN}
       - PUBLIC_APP_URL=${PUBLIC_APP_URL}
       - DISCORD_BOT_SERVICE_URL=${DISCORD_BOT_SERVICE_URL}
+      - DISCORD_BOT_INVITE_URL=${DISCORD_BOT_INVITE_URL}
      # ── Common provider examples (uncomment and fill in one block) ────────────
 
       # Gmail (use an App Password, not your account password):
