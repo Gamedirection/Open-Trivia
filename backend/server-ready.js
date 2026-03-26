@@ -17,6 +17,9 @@ const SCORE_MIN_POINTS = parseInt(process.env.SCORE_MIN_POINTS || '5', 10);
 const SCORE_MAX_EASY = parseInt(process.env.SCORE_MAX_EASY || '10', 10);
 const SCORE_MAX_MED = parseInt(process.env.SCORE_MAX_MED || '15', 10);
 const SCORE_MAX_HARD = parseInt(process.env.SCORE_MAX_HARD || '20', 10);
+const DISCORD_SCORE_EASY = parseInt(process.env.DISCORD_SCORE_EASY || '5', 10);
+const DISCORD_SCORE_MED = parseInt(process.env.DISCORD_SCORE_MED || '10', 10);
+const DISCORD_SCORE_HARD = parseInt(process.env.DISCORD_SCORE_HARD || '15', 10);
 const SCORE_FAST_MS = parseInt(process.env.SCORE_FAST_MS || '2000', 10);
 const SCORE_SLOW_MS = parseInt(process.env.SCORE_SLOW_MS || '20000', 10);
 const DIFF_MIN_ATTEMPTS = parseInt(process.env.DIFF_MIN_ATTEMPTS || '25', 10);
@@ -582,6 +585,26 @@ function computePoints(elapsedMs, complexity, settings) {
     return Math.round(maxPoints + (minPoints - maxPoints) * t);
 }
 
+function getDifficultyMaxPoints(complexity, settings) {
+    const s = settings || {};
+    const maxByDifficulty = {
+        easy: Number(s.max_easy ?? SCORE_MAX_EASY),
+        medium: Number(s.max_med ?? SCORE_MAX_MED),
+        hard: Number(s.max_hard ?? SCORE_MAX_HARD),
+    };
+    return maxByDifficulty[String(complexity || '').toLowerCase()] ?? Number(s.max_med ?? SCORE_MAX_MED);
+}
+
+function computeDiscordPoints(complexity, settings) {
+    const s = settings || {};
+    const discordByDifficulty = {
+        easy: Number(s.discord_easy ?? DISCORD_SCORE_EASY),
+        medium: Number(s.discord_med ?? DISCORD_SCORE_MED),
+        hard: Number(s.discord_hard ?? DISCORD_SCORE_HARD),
+    };
+    return discordByDifficulty[String(complexity || '').toLowerCase()] ?? Number(s.discord_med ?? DISCORD_SCORE_MED);
+}
+
 async function adjustQuestionDifficulty(questionId, settings) {
     const stats = await pool.query(`
         SELECT q.complexity,
@@ -885,6 +908,9 @@ async function initDatabase() {
                 max_easy INT DEFAULT 10,
                 max_med INT DEFAULT 15,
                 max_hard INT DEFAULT 20,
+                discord_easy INT DEFAULT 5,
+                discord_med INT DEFAULT 10,
+                discord_hard INT DEFAULT 15,
                 fast_ms INT DEFAULT 2000,
                 slow_ms INT DEFAULT 20000,
                 diff_min_attempts INT DEFAULT 25,
@@ -1050,6 +1076,9 @@ async function initDatabase() {
                 max_easy INT DEFAULT 10,
                 max_med INT DEFAULT 15,
                 max_hard INT DEFAULT 20,
+                discord_easy INT DEFAULT 5,
+                discord_med INT DEFAULT 10,
+                discord_hard INT DEFAULT 15,
                 fast_ms INT DEFAULT 2000,
                 slow_ms INT DEFAULT 20000,
                 diff_min_attempts INT DEFAULT 25,
@@ -1147,6 +1176,9 @@ async function initDatabase() {
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_min_attempts INT DEFAULT 25`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_up_threshold NUMERIC DEFAULT 0.4`,
             `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS diff_down_threshold NUMERIC DEFAULT 0.8`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS discord_easy INT DEFAULT 5`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS discord_med INT DEFAULT 10`,
+            `ALTER TABLE scoring_settings ADD COLUMN IF NOT EXISTS discord_hard INT DEFAULT 15`,
             `UPDATE users SET display_name = split_part(email, '@', 1)
              WHERE (display_name IS NULL OR display_name = '') AND position('@' in email) > 0`,
             `UPDATE users SET show_email = FALSE WHERE show_email IS NULL`,
@@ -1270,14 +1302,17 @@ async function getScoringSettings() {
     const r = await pool.query('SELECT * FROM scoring_settings ORDER BY id DESC LIMIT 1');
     if (r.rows.length) return r.rows[0];
     const inserted = await pool.query(`
-        INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, discord_easy, discord_med, discord_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
         RETURNING *`,
         [
             SCORE_MIN_POINTS,
             SCORE_MAX_EASY,
             SCORE_MAX_MED,
             SCORE_MAX_HARD,
+            DISCORD_SCORE_EASY,
+            DISCORD_SCORE_MED,
+            DISCORD_SCORE_HARD,
             SCORE_FAST_MS,
             SCORE_SLOW_MS,
             DIFF_MIN_ATTEMPTS,
@@ -1433,7 +1468,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         question_reports: ['id','question_id','reason','reported_at'],
         score_resets: ['id','scope','user_id','category_id','reset_at','reset_by_admin_id','reason'],
         leaderboard_schedules: ['id','period','enabled','next_run','last_run'],
-        scoring_settings: ['id','min_points','max_easy','max_med','max_hard','fast_ms','slow_ms','diff_min_attempts','diff_up_threshold','diff_down_threshold','updated_at'],
+        scoring_settings: ['id','min_points','max_easy','max_med','max_hard','discord_easy','discord_med','discord_hard','fast_ms','slow_ms','diff_min_attempts','diff_up_threshold','diff_down_threshold','updated_at'],
         privacy_settings: ['id','hide_emails_globally','hide_emails_by_default','updated_at'],
         rate_limit_settings: ['id','guest_min_interval_ms','user_burst_window_ms','user_burst_max','user_cooldown_ms','open_trivia_db_enabled','skip_per_hour','updated_at'],
         image_settings: ['id','max_image_kb','updated_at'],
@@ -2491,7 +2526,7 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
 
         const isCorrect = selectedAnswer === String(session.correct_answer || '').trim().toUpperCase();
         const scoring = await getScoringSettings();
-        const points = isCorrect ? computePoints(elapsedMs, session.complexity, scoring) : 0;
+        const points = isCorrect ? computeDiscordPoints(session.complexity, scoring) : 0;
         const optionLookup = {
             A: session.option_a,
             B: session.option_b,
@@ -2524,6 +2559,7 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
             link_url: null,
             is_correct: isCorrect,
             points_awarded: points,
+            difficulty: String(session.complexity || '').trim().toLowerCase() || 'medium',
             answered_count: parseInt(countRes.rows[0].count, 10) || 0,
             correct_answer: correctAnswer,
             correct_answer_text: correctAnswerText,
@@ -3424,6 +3460,9 @@ app.post('/admin/scoring-settings', async (req, res) => {
         max_easy,
         max_med,
         max_hard,
+        discord_easy,
+        discord_med,
+        discord_hard,
         fast_ms,
         slow_ms,
         diff_min_attempts,
@@ -3436,6 +3475,9 @@ app.post('/admin/scoring-settings', async (req, res) => {
             Number(max_easy ?? SCORE_MAX_EASY),
             Number(max_med ?? SCORE_MAX_MED),
             Number(max_hard ?? SCORE_MAX_HARD),
+            Number(discord_easy ?? DISCORD_SCORE_EASY),
+            Number(discord_med ?? DISCORD_SCORE_MED),
+            Number(discord_hard ?? DISCORD_SCORE_HARD),
             Number(fast_ms ?? SCORE_FAST_MS),
             Number(slow_ms ?? SCORE_SLOW_MS),
             Number(diff_min_attempts ?? DIFF_MIN_ATTEMPTS),
@@ -3443,11 +3485,11 @@ app.post('/admin/scoring-settings', async (req, res) => {
             Number(diff_down_threshold ?? DIFF_DOWN_THRESHOLD),
         ];
         await runQuery(
-            `INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold, updated_at)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())`,
+            `INSERT INTO scoring_settings (min_points, max_easy, max_med, max_hard, discord_easy, discord_med, discord_hard, fast_ms, slow_ms, diff_min_attempts, diff_up_threshold, diff_down_threshold, updated_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())`,
             vals
         );
-        await auditLog(admin.id, 'SCORING_SETTINGS_UPDATE', `min=${vals[0]}, easy=${vals[1]}, med=${vals[2]}, hard=${vals[3]}, fastMs=${vals[4]}, slowMs=${vals[5]}, diffMinAttempts=${vals[6]}, diffUp=${vals[7]}, diffDown=${vals[8]}`);
+        await auditLog(admin.id, 'SCORING_SETTINGS_UPDATE', `min=${vals[0]}, easy=${vals[1]}, med=${vals[2]}, hard=${vals[3]}, discordEasy=${vals[4]}, discordMed=${vals[5]}, discordHard=${vals[6]}, fastMs=${vals[7]}, slowMs=${vals[8]}, diffMinAttempts=${vals[9]}, diffUp=${vals[10]}, diffDown=${vals[11]}`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

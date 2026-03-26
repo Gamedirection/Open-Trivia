@@ -557,6 +557,9 @@ export default function Admin() {
                 max_easy: Number(scoring.max_easy),
                 max_med: Number(scoring.max_med),
                 max_hard: Number(scoring.max_hard),
+                discord_easy: Number(scoring.discord_easy),
+                discord_med: Number(scoring.discord_med),
+                discord_hard: Number(scoring.discord_hard),
                 fast_ms: Number(scoring.fast_ms),
                 slow_ms: Number(scoring.slow_ms),
                 diff_min_attempts: Number(scoring.diff_min_attempts),
@@ -1904,6 +1907,35 @@ export default function Admin() {
                                         />
                                     </div>
                                     <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Discord Easy</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.discord_easy}
+                                            onChange={e => setScoring({ ...scoring, discord_easy: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Discord Medium</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.discord_med}
+                                            onChange={e => setScoring({ ...scoring, discord_med: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
+                                    <div>
+                                        <label style={{ fontSize: '12px', color: '#888' }}>Discord Hard</label>
+                                        <input
+                                            type="number"
+                                            value={scoring.discord_hard}
+                                            onChange={e => setScoring({ ...scoring, discord_hard: e.target.value })}
+                                            style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                        />
+                                    </div>
+                                    <div>
                                         <label style={{ fontSize: '12px', color: '#888' }}>Fast Time (ms)</label>
                                         <input
                                             type="number"
@@ -1921,6 +1953,9 @@ export default function Admin() {
                                             style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                         />
                                     </div>
+                                </div>
+                                <div style={{ fontSize: '12px', color: '#666', lineHeight: 1.5 }}>
+                                    Discord scores are fixed values with no time bonus. Defaults: Easy +5, Medium +10, Hard +15.
                                 </div>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '10px' }}>
                                     <div>
