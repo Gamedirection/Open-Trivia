@@ -17,6 +17,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Discord users can submit question suggestions directly from the bot for admin approval.
 - Public Terms of Use and Privacy Policy pages with deployment-configurable operator/contact identity.
 - Question answers now collapse blank slots automatically so True/False style questions render as two full-width answers instead of four sparse buttons.
+- Correct answers now trigger a faster rainbow success animation with emoji star-burst effects, and players can disable gameplay animations from their profile settings.
 - Leaderboards with category and timeframe filters (day/month/year).
 - Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries, Discord avatars with Gravatar fallback.
 - Timer-based scoring with configurable min/max points.
@@ -41,6 +42,11 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 ```bash
 docker compose up -d
 ```
+
+Frontend image/version note:
+- The footer version is driven by `FRONTEND_IMAGE_TAG`.
+- If you deploy `ghcr.io/gamedirection/open-trivia-frontend:latest`, set `FRONTEND_IMAGE_TAG=latest`.
+- If you pin a release tag such as `v0.3.14`, set `FRONTEND_IMAGE_TAG=v0.3.14`.
 
 ### Env (Backend)
 ```bash
@@ -70,6 +76,7 @@ Set the Discord application redirect URI to the same callback URL you configure 
 ```bash
 DISCORD_BOT_API_TOKEN=change-me-bot-token
 PUBLIC_APP_URL=http://localhost:3000
+FRONTEND_IMAGE_TAG=latest
 DISCORD_BOT_SERVICE_URL=http://discord-bot:3000
 DISCORD_BOT_INVITE_URL=https://discord.com/oauth2/authorize?client_id=1485851351366766755
 BOT_DISCORD_TOKEN=your-discord-bot-token
@@ -201,6 +208,7 @@ Note: ensure the Swarm section in `docker-compose.yml` secrets is enabled.
 ## Deployment Notes
 - Use tagged images for reproducible deployments.
 - If using `latest`, always `docker compose pull` + `docker compose up -d --force-recreate`.
+- Keep `FRONTEND_IMAGE_TAG` aligned with the frontend image you deploy so the footer version matches the running package.
 - For production, point `APP_URL` at the public site URL.
 - PWA/service worker caching can require a hard refresh on updates.
 

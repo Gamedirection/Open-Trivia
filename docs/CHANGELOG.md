@@ -1,5 +1,10 @@
 # Changelog / Roadmap
 
+## v0.3.14
+- Stabilized the gameplay timer chip so it keeps a fixed width and no longer shifts the difficulty badge as the timer updates.
+- Updated Docker Compose frontend runtime defaults so the footer version now follows the deployed frontend image tag (`latest` by default, or a pinned `FRONTEND_IMAGE_TAG` when provided).
+- Refined the frontend success feedback with a faster rainbow correct-answer animation, emoji star-burst particles, and smaller footer logo sizing while keeping the header logo at its original size.
+
 ## v0.3.11
 - Added support for two-answer or four-answer questions across admin question creation, user suggestions, and backend validation.
 - Added Discord bot question suggestions through `/suggest-question`, sending requests into the admin review queue.
