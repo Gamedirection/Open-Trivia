@@ -352,7 +352,9 @@ export default function Game() {
             padding: '15px',
             fontWeight: 'bold',
             cursor: answered ? 'default' : 'pointer',
-            transition: animationsEnabled ? 'all 0.3s ease' : 'none'
+            transition: animationsEnabled ? 'all 0.3s ease' : 'none',
+            position: 'relative',
+            overflow: 'hidden'
         };
 
         if (!result) {
@@ -535,6 +537,13 @@ export default function Game() {
                         disabled={!!answered}
                     >
                         {opt.text}
+                        {animationsEnabled && result && opt.char === result.correctAnswer && (
+                            <span className="answer-star-burst" aria-hidden="true">
+                                {['✨', '🌟', '⭐', '💫', '✨', '⭐'].map((sprite, index) => (
+                                    <span key={`${opt.char}-star-${index}`} className={`answer-star answer-star-${index + 1}`}>{sprite}</span>
+                                ))}
+                            </span>
+                        )}
                     </button>
                 ))}
             </div>

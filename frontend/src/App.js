@@ -503,7 +503,7 @@ function App() {
                                         style={{
                                             display: 'block',
                                             width: '100%',
-                                            maxWidth: '140px',
+                                            maxWidth: '50px',
                                             height: 'auto',
                                             margin: '0 auto'
                                         }}
