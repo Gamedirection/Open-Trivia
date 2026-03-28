@@ -1,5 +1,9 @@
 # Changelog / Roadmap
 
+## v0.3.16
+- Synced the bundled Discord bot with paginated schedule listings so large recurring-job lists fit within Discord's message limits.
+- Updated the Discord bot interaction code to use current Discord.js flags-based ephemeral replies and `ClientReady` startup handling.
+
 ## v0.3.15
 - Added Discord schedule run-status tracking so recurring trivia now records whether the last attempt succeeded or failed.
 - Updated backend schedule bookkeeping so the next scheduled run reflects the most recent attempt instead of stale timestamps.
