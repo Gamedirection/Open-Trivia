@@ -17,8 +17,8 @@ services:
       - backend
     environment:
       - REACT_APP_API_URL=/api
-      - REACT_APP_VERSION=${FRONTEND_IMAGE_TAG:-v0.3.2}
-      - APP_IMAGE_TAG=${FRONTEND_IMAGE_TAG:-v0.3.2}
+      - REACT_APP_VERSION=${FRONTEND_IMAGE_TAG:-latest}
+      - APP_IMAGE_TAG=${FRONTEND_IMAGE_TAG:-latest}
       - PUBLIC_APP_URL=${PUBLIC_APP_URL}
       - APP_URL=${APP_URL}
       - LEGAL_OPERATOR_NAME=${LEGAL_OPERATOR_NAME}

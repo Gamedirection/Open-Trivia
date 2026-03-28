@@ -469,7 +469,13 @@ export default function Game() {
                 <span style={{
                     padding: '5px 12px', borderRadius: '20px',
                     backgroundColor: 'var(--card-bg)', border: '1px solid var(--border-color)',
-                    fontSize: '13px', fontWeight: 'bold', color: 'var(--text-color)'
+                    fontSize: '13px',
+                    fontWeight: 'bold',
+                    color: 'var(--text-color)',
+                    display: 'inline-flex',
+                    justifyContent: 'center',
+                    minWidth: '82px',
+                    fontVariantNumeric: 'tabular-nums'
                 }}>
                     ⏱ {Math.min(99.9, elapsedMs / 1000).toFixed(1)}s
                 </span>
