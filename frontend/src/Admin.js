@@ -1152,6 +1152,23 @@ export default function Admin() {
                                     <Badge color={diffColor[q.complexity] || '#6c757d'} text={q.complexity} />
                                 </div>
                             </div>
+                            {Array.isArray(q.duplicate_matches) && q.duplicate_matches.length > 0 && (
+                                <div style={{ marginBottom: '10px', padding: '10px', borderRadius: '8px', backgroundColor: '#fff3cd', color: '#856404', border: '1px solid #ffe69c' }}>
+                                    <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Possible duplicates</div>
+                                    <div style={{ display: 'grid', gap: '6px' }}>
+                                        {q.duplicate_matches.map((match) => (
+                                            <div key={`${match.kind}-${match.id}`} style={{ fontSize: '12px' }}>
+                                                <strong>{match.kind === 'existing' ? 'Existing' : 'Pending'} #{match.id}</strong>
+                                                {' · '}
+                                                {match.category_name || 'Uncategorized'}
+                                                {' · '}
+                                                {Math.round((match.similarity || 0) * 100)}% similar
+                                                <div style={{ color: '#6c757d', marginTop: '2px' }}>{match.text}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
                             <p style={{ fontWeight: '600', color: 'var(--text-color)', margin: '0 0 10px' }}>{q.text}</p>
                             {q.image_url && (
                                 <img

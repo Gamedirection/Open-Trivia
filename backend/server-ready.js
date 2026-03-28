@@ -122,6 +122,31 @@ function buildDiscordLinkUrl(targetPath = '/') {
     return buildPublicAppUrl(`/api/auth/discord/start?target=${encodeURIComponent(target)}`);
 }
 
+function normalizeQuestionTextForSimilarity(value) {
+    return String(value || '')
+        .toLowerCase()
+        .replace(/&[^;\s]+;/g, ' ')
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function computeQuestionSimilarity(a, b) {
+    const left = normalizeQuestionTextForSimilarity(a);
+    const right = normalizeQuestionTextForSimilarity(b);
+    if (!left || !right) return 0;
+    if (left === right) return 1;
+    if (left.includes(right) || right.includes(left)) return 0.92;
+    const leftTokens = new Set(left.split(' ').filter((token) => token.length > 2));
+    const rightTokens = new Set(right.split(' ').filter((token) => token.length > 2));
+    if (!leftTokens.size || !rightTokens.size) return 0;
+    let overlap = 0;
+    for (const token of leftTokens) {
+        if (rightTokens.has(token)) overlap += 1;
+    }
+    return overlap / Math.max(leftTokens.size, rightTokens.size);
+}
+
 function verifyDiscordState(state) {
     return jwt.verify(state, process.env.JWT_SECRET);
 }
@@ -4017,8 +4042,48 @@ app.post('/admin/users/:id/unblock', async (req, res) => {
 app.get('/admin/queue', async (req, res) => {
     if (!requireAdmin(req, res)) return;
     try {
-        const r = await pool.query(`SELECT * FROM pending_questions WHERE status='pending' ORDER BY submitted_at DESC`);
-        res.json(r.rows);
+        const pendingRes = await pool.query(`SELECT * FROM pending_questions WHERE status='pending' ORDER BY submitted_at DESC`);
+        const existingRes = await pool.query(`
+            SELECT q.id, q.text, c.name AS category_name
+            FROM questions q
+            LEFT JOIN categories c ON c.id = q.category_id
+        `);
+        const pendingRows = pendingRes.rows;
+        const existingRows = existingRes.rows;
+        const enriched = pendingRows.map((row) => {
+            const matches = [];
+            for (const existing of existingRows) {
+                const score = computeQuestionSimilarity(row.text, existing.text);
+                if (score >= 0.55) {
+                    matches.push({
+                        kind: 'existing',
+                        id: existing.id,
+                        text: existing.text,
+                        category_name: existing.category_name,
+                        similarity: Number(score.toFixed(2)),
+                    });
+                }
+            }
+            for (const other of pendingRows) {
+                if (other.id === row.id) continue;
+                const score = computeQuestionSimilarity(row.text, other.text);
+                if (score >= 0.55) {
+                    matches.push({
+                        kind: 'pending',
+                        id: other.id,
+                        text: other.text,
+                        category_name: other.category_name,
+                        similarity: Number(score.toFixed(2)),
+                    });
+                }
+            }
+            matches.sort((a, b) => b.similarity - a.similarity);
+            return {
+                ...row,
+                duplicate_matches: matches.slice(0, 5),
+            };
+        });
+        res.json(enriched);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
