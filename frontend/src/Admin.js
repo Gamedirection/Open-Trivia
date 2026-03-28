@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { gravatarUrl } from './utils/gravatar';
 
@@ -26,6 +26,8 @@ const getUserAvatarUrl = (user, size = 48) => {
 };
 
 const getFilledOptionKeys = (options) => ['A', 'B', 'C', 'D'].filter((key) => String(options[key] || '').trim());
+const normalizeSearchText = (value) => String(value || '').trim().toLowerCase();
+const QUESTION_PAGE_SIZE_OPTIONS = ['25', '100', 'ALL'];
 
 const Toast = ({ msg }) => msg ? (
     <div style={{
@@ -121,7 +123,7 @@ function QuestionForm({ categories, onSubmit, initial = {}, submitLabel = '✅ A
             <div>
                 <label style={{ display: 'block', marginBottom: '4px', fontWeight: 'bold', fontSize: '13px' }}>Category</label>
                 <select value={catId} onChange={e => setCatId(e.target.value)} style={iStyle}>
-                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}{c.disabled ? ' (disabled)' : ''}</option>)}
                 </select>
             </div>
             <div>
@@ -305,12 +307,28 @@ export default function Admin() {
     const [discordSsoSaving, setDiscordSsoSaving] = useState(false);
     const [discordBot, setDiscordBot] = useState(null);
     const [discordBotSaving, setDiscordBotSaving] = useState(false);
+    const [userSearch, setUserSearch] = useState('');
+    const [userRoleFilter, setUserRoleFilter] = useState('all');
+    const [userStatusFilter, setUserStatusFilter] = useState('all');
+    const [questionSearch, setQuestionSearch] = useState('');
+    const [questionDifficultyFilter, setQuestionDifficultyFilter] = useState('all');
+    const [questionStatusFilter, setQuestionStatusFilter] = useState('all');
+    const [questionMinAttempts, setQuestionMinAttempts] = useState('');
+    const [questionPage, setQuestionPage] = useState(1);
+    const [questionPageSize, setQuestionPageSize] = useState(() => {
+        try {
+            const stored = localStorage.getItem('admin_question_page_size');
+            return QUESTION_PAGE_SIZE_OPTIONS.includes(stored) ? stored : 'ALL';
+        } catch {
+            return 'ALL';
+        }
+    });
 
     const flash = useCallback((m) => { setToast(m); setTimeout(() => setToast(''), 3500); }, []);
 
     const loadCategories = useCallback(async () => {
         try {
-            const r = await axios.get(`${API_URL}/categories`, authCfg());
+            const r = await axios.get(`${API_URL}/categories?includeDisabled=1`, authCfg());
             setCategories(r.data);
             if (r.data.length > 0 && !selCat) setSelCat(r.data[0]);
         } catch { flash('❌ Failed to load categories'); }
@@ -428,6 +446,66 @@ export default function Admin() {
     useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadDiscordSsoSettings(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadDiscordBotSettings(); }, [tab]);
+    useEffect(() => { setQuestionPage(1); }, [selCat?.id, questionSearch, questionDifficultyFilter, questionStatusFilter, questionMinAttempts, questionPageSize]);
+    useEffect(() => {
+        try {
+            localStorage.setItem('admin_question_page_size', questionPageSize);
+        } catch {}
+    }, [questionPageSize]);
+
+    const filteredRealUsers = useMemo(() => {
+        const search = normalizeSearchText(userSearch);
+        return users
+            .filter((u) => !u.is_anonymous)
+            .filter((u) => {
+                if (userRoleFilter !== 'all' && u.role !== userRoleFilter) return false;
+                const blockedUntil = u.blocked_until ? new Date(u.blocked_until) : null;
+                const isBlocked = blockedUntil && blockedUntil > new Date();
+                if (userStatusFilter === 'blocked' && !isBlocked) return false;
+                if (userStatusFilter === 'active' && isBlocked) return false;
+                if (!search) return true;
+                return [u.email, u.display_name, u.discord_username, u.role]
+                    .some((value) => normalizeSearchText(value).includes(search));
+            });
+    }, [users, userSearch, userRoleFilter, userStatusFilter]);
+
+    const filteredQuestions = useMemo(() => {
+        const search = normalizeSearchText(questionSearch);
+        const minAttempts = Number(questionMinAttempts);
+        return questions.filter((q) => {
+            if (questionDifficultyFilter !== 'all' && q.complexity !== questionDifficultyFilter) return false;
+            if (questionStatusFilter === 'enabled' && q.disabled) return false;
+            if (questionStatusFilter === 'disabled' && !q.disabled) return false;
+            if (questionMinAttempts !== '' && (Number.isNaN(minAttempts) || Number(q.total_attempts || 0) < minAttempts)) return false;
+            if (!search) return true;
+            return [
+                q.text,
+                q.option_a,
+                q.option_b,
+                q.option_c,
+                q.option_d,
+                q.correct_answer,
+                q.complexity,
+                q.id
+            ].some((value) => normalizeSearchText(value).includes(search));
+        });
+    }, [questions, questionSearch, questionDifficultyFilter, questionStatusFilter, questionMinAttempts]);
+
+    const paginatedQuestions = useMemo(() => {
+        if (questionPageSize === 'ALL') return filteredQuestions;
+        const pageSize = Number(questionPageSize);
+        const start = (questionPage - 1) * pageSize;
+        return filteredQuestions.slice(start, start + pageSize);
+    }, [filteredQuestions, questionPage, questionPageSize]);
+
+    const totalQuestionPages = useMemo(() => {
+        if (questionPageSize === 'ALL') return 1;
+        return Math.max(1, Math.ceil(filteredQuestions.length / Number(questionPageSize)));
+    }, [filteredQuestions.length, questionPageSize]);
+
+    useEffect(() => {
+        setQuestionPage((current) => Math.min(current, totalQuestionPages));
+    }, [totalQuestionPages]);
 
     // ── Category actions ───────────────────────────────────────────────────────
     const addCategory = async () => {
@@ -448,6 +526,19 @@ export default function Admin() {
             setSelCat(null); setQuestions([]);
             loadCategories();
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Delete failed')); }
+    };
+
+    const toggleCategoryDisabled = async (cat) => {
+        try {
+            await axios.patch(`${API_URL}/categories/${cat.id}`, { disabled: !cat.disabled }, authCfg());
+            flash(cat.disabled ? '✅ Category enabled' : '🚫 Category disabled');
+            loadCategories();
+            if (selCat?.id === cat.id) {
+                setSelCat({ ...cat, disabled: !cat.disabled });
+            }
+        } catch (e) {
+            flash('❌ ' + (e.response?.data?.error || 'Category update failed'));
+        }
     };
 
     // ── Question actions ───────────────────────────────────────────────────────
@@ -786,7 +877,7 @@ export default function Admin() {
     };
 
     const reviewBadgeCount = pending.length + reported.length;
-    const realUsers = users.filter(u => !u.is_anonymous);
+    const realUsers = filteredRealUsers;
     const anonUsers = users.filter(u => u.is_anonymous);
 
     return (
@@ -843,8 +934,9 @@ export default function Admin() {
                                             border: '2px solid var(--btn-primary)',
                                             backgroundColor: selCat?.id === c.id ? 'var(--btn-primary)' : 'transparent',
                                             color: selCat?.id === c.id ? 'white' : 'var(--text-color)',
+                                            opacity: c.disabled ? 0.55 : 1,
                                         }}>
-                                        {c.name}
+                                        {c.name}{c.disabled ? ' (disabled)' : ''}
                                     </button>
                                 ))}
                             </div>
@@ -855,22 +947,56 @@ export default function Admin() {
                                         <h3 style={{ margin: 0 }}>
                                             {selCat.name}
                                             <span style={{ marginLeft: '10px', fontSize: '14px', color: '#888', fontWeight: 'normal' }}>
-                                                — {questions.length} question{questions.length !== 1 ? 's' : ''}
+                                                — {filteredQuestions.length} matching question{filteredQuestions.length !== 1 ? 's' : ''}
                                             </span>
                                         </h3>
+                                        {selCat.disabled && <Badge color="#6c757d" text="category disabled" />}
+                                    </div>
+
+                                    <div style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '14px' }}>
+                                        <input
+                                            value={questionSearch}
+                                            onChange={e => setQuestionSearch(e.target.value)}
+                                            placeholder="Search text or answers..."
+                                            style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}
+                                        />
+                                        <select value={questionDifficultyFilter} onChange={e => setQuestionDifficultyFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}>
+                                            <option value="all">All difficulties</option>
+                                            <option value="easy">Easy</option>
+                                            <option value="medium">Medium</option>
+                                            <option value="hard">Hard</option>
+                                        </select>
+                                        <select value={questionStatusFilter} onChange={e => setQuestionStatusFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}>
+                                            <option value="all">All statuses</option>
+                                            <option value="enabled">Enabled only</option>
+                                            <option value="disabled">Disabled only</option>
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            value={questionMinAttempts}
+                                            onChange={e => setQuestionMinAttempts(e.target.value)}
+                                            placeholder="Min guesses"
+                                            style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}
+                                        />
+                                        <select value={questionPageSize} onChange={e => setQuestionPageSize(e.target.value)} style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}>
+                                            {QUESTION_PAGE_SIZE_OPTIONS.map((size) => (
+                                                <option key={size} value={size}>{size === 'ALL' ? 'Show all' : `${size} per page`}</option>
+                                            ))}
+                                        </select>
                                     </div>
 
                                     {qLoading && <p style={{ color: '#888' }}>Loading...</p>}
                                     {qRefreshing && <p style={{ color: '#888' }}>Refreshing...</p>}
 
-                                    {!qLoading && questions.length === 0 && (
+                                    {!qLoading && filteredQuestions.length === 0 && (
                                         <div style={{ ...cardStyle, textAlign: 'center', padding: '30px', color: '#888' }}>
-                                            No questions in this category.{' '}
+                                            No matching questions in this category.{' '}
                                             <button className="btn btn-primary" style={{ marginLeft: '8px' }} onClick={() => setTab('add')}>Add one →</button>
                                         </div>
                                     )}
 
-                                    {questions.map(q => (
+                                    {paginatedQuestions.map(q => (
                                         <div key={q.id} style={{ ...cardStyle, opacity: q.disabled ? 0.55 : 1, borderLeft: `4px solid ${q.disabled ? '#6c757d' : (diffColor[q.complexity] || '#aaa')}` }}>
                                             {editingQ?.id === q.id ? (
                                                 <>
@@ -936,6 +1062,18 @@ export default function Admin() {
                                             )}
                                         </div>
                                     ))}
+
+                                    {questionPageSize !== 'ALL' && totalQuestionPages > 1 && (
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+                                            <span style={{ fontSize: '13px', color: '#888' }}>
+                                                Page {questionPage} of {totalQuestionPages}
+                                            </span>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button className="btn" disabled={questionPage <= 1} onClick={() => setQuestionPage(p => Math.max(1, p - 1))}>← Previous</button>
+                                                <button className="btn" disabled={questionPage >= totalQuestionPages} onClick={() => setQuestionPage(p => Math.min(totalQuestionPages, p + 1))}>Next →</button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </>
                             )}
                         </>
@@ -970,11 +1108,18 @@ export default function Admin() {
                     {categories.length === 0 && <p style={{ color: '#888' }}>No categories yet.</p>}
                     {categories.map(c => (
                         <div key={c.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{c.name}</span>
+                            <div>
+                                <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{c.name}</span>
+                                {c.disabled && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6c757d', fontWeight: 'bold' }}>Disabled</span>}
+                            </div>
                             <div style={{ display: 'flex', gap: '8px' }}>
                                 <button className="btn" style={{ fontSize: '12px', padding: '5px 12px' }}
                                     onClick={() => { setSelCat(c); loadQuestions(c.id); setTab('questions'); }}>
                                     📚 Browse
+                                </button>
+                                <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: c.disabled ? '#28a745' : '#ffc107', color: c.disabled ? 'white' : '#333' }}
+                                    onClick={() => toggleCategoryDisabled(c)}>
+                                    {c.disabled ? '✅ Enable' : '🚫 Disable'}
                                 </button>
                                 <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#dc3545', color: 'white' }}
                                     onClick={() => deleteCategory(c)}>
@@ -1113,6 +1258,25 @@ export default function Admin() {
                             </label>
                             <button className="btn" onClick={loadUsers} style={{ fontSize: '12px', padding: '5px 12px' }}>🔄 Refresh</button>
                         </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '10px', marginBottom: '16px' }}>
+                        <input
+                            value={userSearch}
+                            onChange={e => setUserSearch(e.target.value)}
+                            placeholder="Search email, display, Discord..."
+                            style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}
+                        />
+                        <select value={userRoleFilter} onChange={e => setUserRoleFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}>
+                            <option value="all">All roles</option>
+                            <option value="player">Players</option>
+                            <option value="admin">Admins</option>
+                        </select>
+                        <select value={userStatusFilter} onChange={e => setUserStatusFilter(e.target.value)} style={{ padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}>
+                            <option value="all">All statuses</option>
+                            <option value="active">Active only</option>
+                            <option value="blocked">Blocked only</option>
+                        </select>
                     </div>
 
                     {usersLoading ? (

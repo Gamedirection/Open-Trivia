@@ -16,7 +16,11 @@ export default function Dashboard() {
     const [profileSaving, setProfileSaving] = useState(false);
     const [displayName, setDisplayName] = useState('');
     const [showEmail, setShowEmail] = useState(true);
+    const [animationsEnabled, setAnimationsEnabled] = useState(true);
     const [profileNotice, setProfileNotice] = useState('');
+    const [discordLinkBusy, setDiscordLinkBusy] = useState(false);
+    const [emailUpgrade, setEmailUpgrade] = useState({ email: '', password: '' });
+    const [emailUpgradeSaving, setEmailUpgradeSaving] = useState(false);
     const [censorNames, setCensorNames] = useState(() => {
         try {
             return localStorage.getItem('leaderboard_censor_names') === 'true';
@@ -71,6 +75,7 @@ export default function Dashboard() {
             setProfile(res.data);
             setDisplayName(res.data.display_name || '');
             setShowEmail(!!res.data.show_email);
+            setAnimationsEnabled(res.data.animations_enabled !== false);
         } catch (err) {
             console.error('Failed to load profile', err);
             setProfile(null);
@@ -86,17 +91,21 @@ export default function Dashboard() {
         try {
             const res = await axios.post(`${API_URL}/me/profile`, {
                 displayName,
-                showEmail
+                showEmail,
+                animationsEnabled
             }, {
                 headers: { Authorization: `Bearer ${token}` }
             });
             setProfile(res.data);
             setDisplayName(res.data.display_name || '');
             setShowEmail(!!res.data.show_email);
+            setAnimationsEnabled(res.data.animations_enabled !== false);
             const stored = localStorage.getItem('user');
             if (stored) {
                 const u = JSON.parse(stored);
                 u.display_name = res.data.display_name;
+                u.animations_enabled = res.data.animations_enabled;
+                u.discord_username = res.data.discord_username || null;
                 localStorage.setItem('user', JSON.stringify(u));
                 window.dispatchEvent(new Event('user-updated'));
             }
@@ -106,6 +115,45 @@ export default function Dashboard() {
             setProfileNotice('Save failed. Please try again.');
         } finally {
             setProfileSaving(false);
+        }
+    };
+
+    const connectDiscord = async () => {
+        if (!token) return;
+        setDiscordLinkBusy(true);
+        setProfileNotice('');
+        try {
+            const res = await axios.get(`${API_URL}/me/profile/discord/link-url`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            if (!res.data?.url) throw new Error('Missing Discord link URL');
+            window.location.assign(res.data.url);
+        } catch (err) {
+            console.error('Failed to start Discord link', err);
+            setProfileNotice(err.response?.data?.error || 'Discord link failed to start.');
+            setDiscordLinkBusy(false);
+        }
+    };
+
+    const attachEmailPassword = async () => {
+        if (!token) return;
+        setEmailUpgradeSaving(true);
+        setProfileNotice('');
+        try {
+            const res = await axios.post(`${API_URL}/me/profile/add-email`, emailUpgrade, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            localStorage.setItem('token', res.data.token);
+            localStorage.setItem('user', JSON.stringify(res.data.user));
+            window.dispatchEvent(new Event('user-updated'));
+            setEmailUpgrade({ email: '', password: '' });
+            await fetchProfile();
+            setProfileNotice('Email sign-in added to your account.');
+        } catch (err) {
+            console.error('Failed to add email/password', err);
+            setProfileNotice(err.response?.data?.error || 'Could not add email/password.');
+        } finally {
+            setEmailUpgradeSaving(false);
         }
     };
 
@@ -259,6 +307,60 @@ export default function Dashboard() {
                                 Create a Gravatar account
                             </a>
                         </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <label style={{ fontSize: '13px', color: '#444', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input
+                                    type="checkbox"
+                                    checked={animationsEnabled}
+                                    onChange={e => setAnimationsEnabled(e.target.checked)}
+                                />
+                                Enable gameplay animations
+                            </label>
+                        </div>
+                        <div style={{ padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+                            <div style={{ fontWeight: 'bold', marginBottom: '6px' }}>Discord Account</div>
+                            {profile?.discord_linked ? (
+                                <div style={{ fontSize: '13px', color: '#444' }}>
+                                    Linked as <strong>{profile.discord_username || 'Discord user'}</strong>
+                                </div>
+                            ) : (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                                    <div style={{ fontSize: '13px', color: '#666' }}>
+                                        Link Discord to this active account.
+                                    </div>
+                                    <button className="btn" onClick={connectDiscord} disabled={discordLinkBusy} style={{ backgroundColor: '#5865F2', color: 'white', padding: '8px 14px' }}>
+                                        {discordLinkBusy ? 'Opening Discord…' : 'Connect Discord'}
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                        {profile?.uses_discord_email_only && (
+                            <div style={{ padding: '12px', border: '1px solid var(--border-color)', borderRadius: '8px', display: 'grid', gap: '10px' }}>
+                                <div style={{ fontWeight: 'bold' }}>Add Email Sign-In</div>
+                                <div style={{ fontSize: '13px', color: '#666' }}>
+                                    Your account currently uses Discord-only sign-in. Add an email and password so you can sign in without Discord too.
+                                </div>
+                                <input
+                                    type="email"
+                                    value={emailUpgrade.email}
+                                    onChange={e => setEmailUpgrade((prev) => ({ ...prev, email: e.target.value }))}
+                                    placeholder="Email address"
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                />
+                                <input
+                                    type="password"
+                                    value={emailUpgrade.password}
+                                    onChange={e => setEmailUpgrade((prev) => ({ ...prev, password: e.target.value }))}
+                                    placeholder="Password (min 6 characters)"
+                                    style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                                />
+                                <div>
+                                    <button className="btn btn-primary" onClick={attachEmailPassword} disabled={emailUpgradeSaving}>
+                                        {emailUpgradeSaving ? 'Saving…' : 'Add Email Sign-In'}
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         <div>
                             <button className="btn btn-primary" onClick={saveProfile} disabled={profileSaving}>
                                 {profileSaving ? 'Saving...' : 'Save Profile'}

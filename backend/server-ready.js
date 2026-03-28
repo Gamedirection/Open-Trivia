@@ -105,12 +105,16 @@ function buildDiscordAvatarUrl(discordId, avatarHash) {
     return `https://cdn.discordapp.com/avatars/${discordId}/${avatarHash}.${ext}`;
 }
 
-function buildDiscordState(targetPath = '/') {
+function buildDiscordState(targetPath = '/', extra = {}) {
     return jwt.sign(
-        { provider: 'discord', targetPath, nonce: crypto.randomBytes(12).toString('hex') },
+        { provider: 'discord', targetPath, nonce: crypto.randomBytes(12).toString('hex'), ...extra },
         process.env.JWT_SECRET,
         { expiresIn: '10m' }
     );
+}
+
+function isDiscordOnlyEmail(email) {
+    return /@users\.open-trivia\.invalid$/i.test(String(email || '').trim());
 }
 
 function buildDiscordLinkUrl(targetPath = '/') {
@@ -233,14 +237,22 @@ function resolveDiscordOnlyDisplayName(discordUsername, discordId) {
     return value.slice(0, 60);
 }
 
-async function ensureDiscordTriviaUser({ discordUserId, discordUsername }) {
+async function ensureDiscordTriviaUser({ discordUserId, discordUsername, discordAvatarUrl = null }) {
     const discordId = String(discordUserId || '').trim();
     if (!discordId) throw new Error('Discord user id is required');
     const existing = await pool.query(
         'SELECT id, role, blocked_until FROM users WHERE discord_id=$1 LIMIT 1',
         [discordId]
     );
-    if (existing.rows.length) return existing.rows[0];
+    if (existing.rows.length) {
+        if (discordAvatarUrl) {
+            await pool.query(
+                'UPDATE users SET discord_username=$1, discord_avatar_url=COALESCE($2, discord_avatar_url) WHERE discord_id=$3',
+                [String(discordUsername || '').trim() || null, discordAvatarUrl, discordId]
+            );
+        }
+        return existing.rows[0];
+    }
 
     try {
         const inserted = await pool.query(
@@ -256,7 +268,7 @@ async function ensureDiscordTriviaUser({ discordUserId, discordUsername }) {
                 false,
                 discordId,
                 String(discordUsername || '').trim() || null,
-                null,
+                discordAvatarUrl,
             ]
         );
         return inserted.rows[0];
@@ -270,6 +282,34 @@ async function ensureDiscordTriviaUser({ discordUserId, discordUsername }) {
         }
         throw err;
     }
+}
+
+async function linkDiscordProfileToUser(profile, userId) {
+    const discordId = String(profile.id || '').trim();
+    if (!discordId) throw new Error('Discord account id missing');
+    const discordUsername = String(profile.username || '').trim() || null;
+    const discordAvatarUrl = buildDiscordAvatarUrl(discordId, profile.avatar);
+    const current = await pool.query('SELECT * FROM users WHERE id=$1 LIMIT 1', [userId]);
+    if (!current.rows.length) throw new Error('User not found');
+    const row = current.rows[0];
+    if (row.discord_id && row.discord_id !== discordId) {
+        throw new Error('This account already has a Discord profile linked');
+    }
+    const existingDiscord = await pool.query('SELECT id FROM users WHERE discord_id=$1 AND id<>$2 LIMIT 1', [discordId, userId]);
+    if (existingDiscord.rows.length) {
+        throw new Error('That Discord account is already linked to another Open-Trivia account');
+    }
+    const updated = await pool.query(
+        `UPDATE users
+         SET discord_id=$1,
+             discord_username=$2,
+             discord_avatar_url=COALESCE($3, discord_avatar_url)
+         WHERE id=$4
+         RETURNING *`,
+        [discordId, discordUsername, discordAvatarUrl, userId]
+    );
+    const privacy = await getPrivacySettings();
+    return normalizeUserRow(updated.rows[0], privacy);
 }
 
 function resolveShowEmail(userShowEmail, privacySettings) {
@@ -855,11 +895,13 @@ async function initDatabase() {
                 show_email BOOLEAN,
                 discord_id VARCHAR(50) UNIQUE,
                 discord_username VARCHAR(255),
-                discord_avatar_url TEXT
+                discord_avatar_url TEXT,
+                animations_enabled BOOLEAN DEFAULT TRUE
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL
+                name VARCHAR(100) NOT NULL,
+                disabled BOOLEAN DEFAULT FALSE
             );
             CREATE TABLE IF NOT EXISTS questions (
                 id SERIAL PRIMARY KEY,
@@ -1058,6 +1100,7 @@ async function initDatabase() {
         const migrations = [
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
+            `ALTER TABLE categories ADD COLUMN IF NOT EXISTS disabled BOOLEAN DEFAULT FALSE`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_by_email VARCHAR(255) DEFAULT 'anonymous'`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS submitted_via VARCHAR(32) DEFAULT 'site'`,
             `ALTER TABLE pending_questions ADD COLUMN IF NOT EXISTS image_url TEXT`,
@@ -1070,6 +1113,7 @@ async function initDatabase() {
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_id VARCHAR(50)`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_username VARCHAR(255)`,
             `ALTER TABLE users ADD COLUMN IF NOT EXISTS discord_avatar_url TEXT`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS animations_enabled BOOLEAN DEFAULT TRUE`,
             `CREATE UNIQUE INDEX IF NOT EXISTS idx_users_discord_id ON users(discord_id) WHERE discord_id IS NOT NULL`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS category_id INT REFERENCES categories(id)`,
             `ALTER TABLE game_sessions ADD COLUMN IF NOT EXISTS points INTEGER DEFAULT 0`,
@@ -1668,6 +1712,27 @@ app.get('/auth/discord/start', async (req, res) => {
     }
 });
 
+app.get('/me/profile/discord/link-url', async (req, res) => {
+    const user = await requireAuth(req, res);
+    if (!user) return;
+    const settings = await getDiscordSsoSettings();
+    if (!settings.active) {
+        return res.status(503).json({ error: 'Discord SSO is not configured' });
+    }
+    try {
+        const state = buildDiscordState('/dashboard', { mode: 'link', linkUserId: user.id });
+        const url = new URL('https://discord.com/oauth2/authorize');
+        url.searchParams.set('client_id', settings.client_id);
+        url.searchParams.set('response_type', 'code');
+        url.searchParams.set('redirect_uri', settings.redirect_uri);
+        url.searchParams.set('scope', 'identify email');
+        url.searchParams.set('state', state);
+        res.json({ url: url.toString() });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/auth/discord/callback', async (req, res) => {
     const { code, state, error } = req.query;
     if (error) {
@@ -1684,7 +1749,9 @@ app.get('/auth/discord/callback', async (req, res) => {
         const verifiedState = verifyDiscordState(String(state));
         const tokenData = await exchangeDiscordCodeForToken(String(code), settings);
         const profile = await fetchDiscordUser(tokenData.access_token);
-        const user = await upsertDiscordUser(profile);
+        const user = verifiedState.mode === 'link' && verifiedState.linkUserId
+            ? await linkDiscordProfileToUser(profile, verifiedState.linkUserId)
+            : await upsertDiscordUser(profile);
         if (user.blocked_until && new Date(user.blocked_until) > new Date() && user.role !== 'admin') {
             return redirectDiscordResult(res, {
                 error: 'Account is blocked',
@@ -1767,7 +1834,17 @@ app.post('/auth/reset-password', async (req, res) => {
 
 // ── CATEGORIES ─────────────────────────────────────────────────────────────────
 app.get('/categories', async (_req, res) => {
-    try { res.json((await pool.query('SELECT * FROM categories ORDER BY name')).rows); }
+    const includeDisabled = ['1', 'true'].includes(String(_req.query.includeDisabled || '').trim().toLowerCase());
+    const viewer = getTokenUser(_req);
+    const canIncludeDisabled = includeDisabled && viewer?.role === 'admin';
+    try {
+        const r = await pool.query(
+            `SELECT * FROM categories
+             ${canIncludeDisabled ? '' : 'WHERE disabled=FALSE'}
+             ORDER BY disabled ASC, name ASC`
+        );
+        res.json(r.rows);
+    }
     catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1794,6 +1871,17 @@ app.delete('/categories/:id', async (req, res) => {
         await auditLog(getTokenUser(req)?.id || null, 'CATEGORY_DELETE_BACKUP', `Backup created before deleting category ${catRow.rows[0].id}`);
         await runQuery('DELETE FROM categories WHERE id=$1', [req.params.id]);
         res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.patch('/categories/:id', async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { disabled } = req.body || {};
+    if (typeof disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be boolean' });
+    try {
+        const r = await runQuery('UPDATE categories SET disabled=$1 WHERE id=$2 RETURNING *', [disabled, req.params.id]);
+        if (!r.rows.length) return res.status(404).json({ error: 'Category not found' });
+        res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1824,7 +1912,7 @@ app.post('/questions', async (req, res) => {
     try {
         const normalizedQuestion = normalizeSubmittedQuestionOptions(options, correctAnswer);
         if (normalizedQuestion.error) return res.status(400).json({ error: normalizedQuestion.error });
-        const catCheck = await pool.query('SELECT id FROM categories WHERE id=$1', [categoryId]);
+        const catCheck = await pool.query('SELECT id FROM categories WHERE id=$1 AND disabled=FALSE', [categoryId]);
         if (!catCheck.rows.length) return res.status(400).json({ error: `Category ${categoryId} not found` });
         const normalizedImageUrl = normalizeImageUrl(imageUrl);
         if (normalizedImageUrl) {
@@ -2038,12 +2126,20 @@ app.get('/game/next', async (req, res) => {
     const catId = Number.isNaN(catParsed) ? null : catParsed;
     try {
         const count = await pool.query(
-            'SELECT COUNT(*) FROM questions WHERE disabled=FALSE AND ($1::int IS NULL OR category_id=$1)',
+            `SELECT COUNT(*)
+             FROM questions q
+             JOIN categories c ON c.id = q.category_id
+             WHERE q.disabled=FALSE AND c.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)`,
             [catId]
         );
         if (parseInt(count.rows[0].count) === 0) return res.json({ message: 'No questions available' });
         const qr = await pool.query(
-            'SELECT * FROM questions WHERE disabled=FALSE AND ($1::int IS NULL OR category_id=$1) ORDER BY RANDOM() LIMIT 1',
+            `SELECT q.*
+             FROM questions q
+             JOIN categories c ON c.id = q.category_id
+             WHERE q.disabled=FALSE AND c.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)
+             ORDER BY RANDOM()
+             LIMIT 1`,
             [catId]
         );
         const q = qr.rows[0];
@@ -2274,7 +2370,7 @@ app.get('/bot/categories', async (req, res) => {
     const bot = await requireBot(req, res);
     if (!bot) return;
     try {
-        const r = await pool.query('SELECT id, name FROM categories ORDER BY name ASC');
+        const r = await pool.query('SELECT id, name FROM categories WHERE disabled=FALSE ORDER BY name ASC');
         res.json(r.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2359,7 +2455,7 @@ app.post('/bot/schedules', async (req, res) => {
     if (scheduleKind === 'interval' && intervalMinutes <= 0) return res.status(400).json({ error: 'intervalMinutes must be > 0' });
     try {
         if (!Number.isFinite(categoryId) && categoryName) {
-            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) AND disabled=FALSE LIMIT 1', [categoryName]);
             if (!cat.rows.length) return res.status(400).json({ error: 'Category not found' });
             categoryId = cat.rows[0].id;
         }
@@ -2395,7 +2491,7 @@ app.patch('/bot/schedules/:id', async (req, res) => {
         let nextCategoryId = body.categoryId === null ? null : (body.categoryId !== undefined ? parseInt(body.categoryId, 10) : row.category_id);
         const categoryName = String(body.categoryName || '').trim();
         if (!Number.isFinite(nextCategoryId) && categoryName) {
-            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) AND disabled=FALSE LIMIT 1', [categoryName]);
             if (!cat.rows.length) return res.status(400).json({ error: 'Category not found' });
             nextCategoryId = cat.rows[0].id;
         }
@@ -2489,14 +2585,14 @@ app.post('/bot/trivia/questions', async (req, res) => {
     const categoryName = String(body.categoryName || '').trim();
     try {
         if (!categoryId && categoryName) {
-            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) LIMIT 1', [categoryName]);
+            const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) AND disabled=FALSE LIMIT 1', [categoryName]);
             if (cat.rows.length) categoryId = cat.rows[0].id;
         }
         const r = await pool.query(
             `SELECT q.*, c.name AS category_name
              FROM questions q
              JOIN categories c ON c.id = q.category_id
-             WHERE q.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)
+             WHERE q.disabled=FALSE AND c.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)
              ORDER BY RANDOM()
              LIMIT $2`,
             [categoryId, count]
@@ -2558,6 +2654,7 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
     const body = req.body || {};
     const discordUserId = String(body.discordUserId || '').trim();
     const discordUsername = String(body.discordUsername || '').trim() || null;
+    const discordAvatarUrl = normalizeImageUrl(body.discordAvatarUrl);
     const selectedAnswer = String(body.selectedAnswer || '').trim().toUpperCase().slice(0, 1);
     const elapsedMs = Number(body.elapsedMs) || 0;
     if (!Number.isFinite(id) || !discordUserId || !['A', 'B', 'C', 'D'].includes(selectedAnswer)) {
@@ -2586,6 +2683,7 @@ app.post('/bot/trivia/sessions/:id/answer', async (req, res) => {
         const linkedUser = await ensureDiscordTriviaUser({
             discordUserId,
             discordUsername,
+            discordAvatarUrl,
         });
         if (linkedUser?.blocked_until && new Date(linkedUser.blocked_until) > new Date() && linkedUser.role !== 'admin') {
             return res.status(403).json({ error: 'Account is blocked', blocked_until: linkedUser.blocked_until });
@@ -2857,7 +2955,10 @@ app.get('/me/profile', async (req, res) => {
     const u = await requireAuth(req, res);
     if (!u) return;
     try {
-        const r = await pool.query('SELECT email, display_name, show_email, discord_id, discord_username FROM users WHERE id=$1', [u.id]);
+        const r = await pool.query(
+            'SELECT email, display_name, show_email, discord_id, discord_username, animations_enabled FROM users WHERE id=$1',
+            [u.id]
+        );
         if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
         const privacy = await getPrivacySettings();
         let displayName = r.rows[0].display_name;
@@ -2876,6 +2977,9 @@ app.get('/me/profile', async (req, res) => {
             hide_emails_by_default: privacy.hide_emails_by_default,
             discord_linked: !!r.rows[0].discord_id,
             discord_username: r.rows[0].discord_username,
+            can_link_discord: !r.rows[0].discord_id,
+            uses_discord_email_only: isDiscordOnlyEmail(r.rows[0].email),
+            animations_enabled: r.rows[0].animations_enabled !== false,
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -2883,7 +2987,7 @@ app.get('/me/profile', async (req, res) => {
 app.post('/me/profile', async (req, res) => {
     const u = await requireAuth(req, res);
     if (!u) return;
-    const { displayName, showEmail } = req.body || {};
+    const { displayName, showEmail, animationsEnabled } = req.body || {};
     try {
         const r = await pool.query('SELECT email FROM users WHERE id=$1', [u.id]);
         if (!r.rows.length) return res.status(404).json({ error: 'User not found' });
@@ -2901,12 +3005,16 @@ app.post('/me/profile', async (req, res) => {
             params.push(showEmail);
             updates.push(`show_email=$${params.length}`);
         }
+        if (typeof animationsEnabled === 'boolean') {
+            params.push(animationsEnabled);
+            updates.push(`animations_enabled=$${params.length}`);
+        }
         if (updates.length) {
             params.push(u.id);
             await runQuery(`UPDATE users SET ${updates.join(', ')} WHERE id=$${params.length}`, params);
         }
         const privacy = await getPrivacySettings();
-        const updated = await pool.query('SELECT email, display_name, show_email FROM users WHERE id=$1', [u.id]);
+        const updated = await pool.query('SELECT email, display_name, show_email, discord_id, discord_username, animations_enabled FROM users WHERE id=$1', [u.id]);
         const displayNameFinal = updated.rows[0].display_name || maskEmail(updated.rows[0].email);
         const showEmailResolved = resolveShowEmail(updated.rows[0].show_email, privacy);
         const effectiveShowEmail = !privacy.hide_emails_globally && showEmailResolved;
@@ -2917,7 +3025,44 @@ app.post('/me/profile', async (req, res) => {
             effective_show_email: effectiveShowEmail,
             hide_emails_globally: privacy.hide_emails_globally,
             hide_emails_by_default: privacy.hide_emails_by_default,
+            discord_linked: !!updated.rows[0].discord_id,
+            discord_username: updated.rows[0].discord_username,
+            can_link_discord: !updated.rows[0].discord_id,
+            uses_discord_email_only: isDiscordOnlyEmail(updated.rows[0].email),
+            animations_enabled: updated.rows[0].animations_enabled !== false,
         });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/me/profile/add-email', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    const { email, password } = req.body || {};
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail || !password) {
+        return res.status(400).json({ error: 'Email and password are required' });
+    }
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+    try {
+        const current = await pool.query('SELECT * FROM users WHERE id=$1', [u.id]);
+        if (!current.rows.length) return res.status(404).json({ error: 'User not found' });
+        if (!isDiscordOnlyEmail(current.rows[0].email)) {
+            return res.status(400).json({ error: 'This account already has a normal email address' });
+        }
+        const existing = await pool.query('SELECT id FROM users WHERE LOWER(email)=LOWER($1) AND id<>$2 LIMIT 1', [normalizedEmail, u.id]);
+        if (existing.rows.length) {
+            return res.status(400).json({ error: 'That email address is already in use' });
+        }
+        const hashed = await bcrypt.hash(password, 10);
+        const updated = await pool.query(
+            'UPDATE users SET email=$1, password_hash=$2 WHERE id=$3 RETURNING *',
+            [normalizedEmail, hashed, u.id]
+        );
+        const privacy = await getPrivacySettings();
+        const user = normalizeUserRow(updated.rows[0], privacy);
+        res.json({ user, token: signAuthToken(user) });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

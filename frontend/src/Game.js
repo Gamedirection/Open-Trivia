@@ -43,6 +43,14 @@ export default function Game() {
     const [openTdbEnabled, setOpenTdbEnabled] = useState(true);
     const [skipPerHour, setSkipPerHour] = useState(3);
     const [skipBusy, setSkipBusy] = useState(false);
+    const [animationsEnabled, setAnimationsEnabled] = useState(() => {
+        try {
+            const user = JSON.parse(localStorage.getItem('user') || 'null');
+            return user?.animations_enabled !== false;
+        } catch {
+            return true;
+        }
+    });
     const openTdbFetchingRef = useRef(false);
 
     const makeGuessCounts = (options = []) => {
@@ -59,7 +67,6 @@ export default function Game() {
     };
 
     const token = localStorage.getItem('token');
-    const isLoggedIn = !!token;
     const isOpenTdbCategory = selectedCategoryId === OPENTDB_CATEGORY_ID;
 
     const fetchOpenTdbBatch = async (amount) => {
@@ -193,6 +200,19 @@ export default function Game() {
         }, 100);
         return () => clearInterval(tick);
     }, [question?.id]);
+
+    useEffect(() => {
+        const syncAnimationPref = () => {
+            try {
+                const user = JSON.parse(localStorage.getItem('user') || 'null');
+                setAnimationsEnabled(user?.animations_enabled !== false);
+            } catch {
+                setAnimationsEnabled(true);
+            }
+        };
+        window.addEventListener('user-updated', syncAnimationPref);
+        return () => window.removeEventListener('user-updated', syncAnimationPref);
+    }, []);
 
     const handleAnswer = async (optionChar) => {
         if (!question || result || answered) return;
@@ -332,7 +352,7 @@ export default function Game() {
             padding: '15px',
             fontWeight: 'bold',
             cursor: answered ? 'default' : 'pointer',
-            transition: 'all 0.3s ease'
+            transition: animationsEnabled ? 'all 0.3s ease' : 'none'
         };
 
         if (!result) {
@@ -509,7 +529,7 @@ export default function Game() {
                 {visibleOptions.map((opt) => (
                     <button
                         key={opt.char}
-                        className="btn"
+                        className={`btn trivia-answer-btn ${animationsEnabled ? 'animations-on' : 'animations-off'} ${result && opt.char === result.correctAnswer ? 'answer-correct' : ''} ${result && opt.char === answered && opt.char !== result.correctAnswer ? 'answer-wrong' : ''}`}
                         style={getButtonStyle(opt.char)}
                         onClick={() => handleAnswer(opt.char)}
                         disabled={!!answered}

@@ -28,12 +28,14 @@ async function initDB() {
                 show_email BOOLEAN,
                 discord_id VARCHAR(50) UNIQUE,
                 discord_username VARCHAR(255),
-                discord_avatar_url TEXT
+                discord_avatar_url TEXT,
+                animations_enabled BOOLEAN DEFAULT TRUE
             );
             
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
-                name VARCHAR(100) NOT NULL
+                name VARCHAR(100) NOT NULL,
+                disabled BOOLEAN DEFAULT FALSE
             );
             
             CREATE TABLE IF NOT EXISTS questions (

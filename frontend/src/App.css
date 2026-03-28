@@ -42,6 +42,38 @@
   color: white;
 }
 
+@keyframes trivia-wrong-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes trivia-correct-bounce {
+  0% { transform: scale(1); filter: hue-rotate(0deg); }
+  35% { transform: scale(1.06); filter: hue-rotate(120deg); }
+  65% { transform: scale(0.98); filter: hue-rotate(240deg); }
+  100% { transform: scale(1); filter: hue-rotate(360deg); }
+}
+
+.trivia-answer-btn.animations-on:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.14);
+}
+
+.trivia-answer-btn.animations-on:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.trivia-answer-btn.animations-on.answer-wrong {
+  animation: trivia-wrong-shake 0.45s ease;
+}
+
+.trivia-answer-btn.animations-on.answer-correct {
+  animation: trivia-correct-bounce 0.7s ease;
+}
+
 .table-scroll {
   overflow-x: auto;
 }
