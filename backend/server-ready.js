@@ -1236,8 +1236,12 @@ async function initDatabase() {
                 enabled BOOLEAN DEFAULT TRUE,
                 next_run TIMESTAMP,
                 last_run TIMESTAMP,
+                last_status VARCHAR(20),
+                last_error TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS last_status VARCHAR(20)`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS last_error TEXT`,
             `CREATE TABLE IF NOT EXISTS discord_trivia_sessions (
                 id SERIAL PRIMARY KEY,
                 guild_id VARCHAR(64),
@@ -1571,7 +1575,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         image_settings: ['id','max_image_kb','updated_at'],
         discord_sso_settings: ['id','enabled','client_id','client_secret','redirect_uri','updated_at'],
         discord_bot_settings: ['id','enabled','api_token','public_app_url','service_url','invite_url','updated_at'],
-        discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','daily_time','enabled','next_run','last_run','created_at'],
+        discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','daily_time','enabled','next_run','last_run','last_status','last_error','created_at'],
         discord_trivia_sessions: ['id','guild_id','channel_id','message_id','question_id','category_id','mode','prompt_user_discord_id','close_after_seconds','closes_at','closed_at','created_at'],
         discord_trivia_answers: ['id','session_id','guild_id','channel_id','question_id','category_id','discord_user_id','discord_username','user_id','selected_answer','is_correct','points_awarded','answered_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
@@ -2572,6 +2576,9 @@ app.post('/bot/schedules/:id/mark-run', async (req, res) => {
     if (!bot) return;
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const body = req.body || {};
+    const status = String(body.status || 'success').trim().toLowerCase();
+    const errorMessage = String(body.error || '').trim() || null;
     try {
         const current = await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1', [id]);
         if (!current.rows.length) return res.status(404).json({ error: 'Schedule not found' });
@@ -2579,10 +2586,10 @@ app.post('/bot/schedules/:id/mark-run', async (req, res) => {
         const nextRun = row.enabled ? computeDiscordScheduleNextRun(row, new Date()) : null;
         const r = await pool.query(
             `UPDATE discord_trivia_schedules
-             SET last_run=NOW(), next_run=$2
+             SET last_run=NOW(), next_run=$2, last_status=$3, last_error=$4
              WHERE id=$1
              RETURNING *`,
-            [id, nextRun]
+            [id, nextRun, status === 'failed' ? 'failed' : 'success', status === 'failed' ? errorMessage : null]
         );
         const updated = await pool.query(
             `SELECT s.*, c.name AS category_name

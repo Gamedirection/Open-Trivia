@@ -1,5 +1,10 @@
 # Changelog / Roadmap
 
+## v0.3.15
+- Added Discord schedule run-status tracking so recurring trivia now records whether the last attempt succeeded or failed.
+- Updated backend schedule bookkeeping so the next scheduled run reflects the most recent attempt instead of stale timestamps.
+- Synced the bundled Discord bot with schedule hardening, bulk removal support, and dynamic version reporting improvements.
+
 ## v0.3.14
 - Stabilized the gameplay timer chip so it keeps a fixed width and no longer shifts the difficulty badge as the timer updates.
 - Updated Docker Compose frontend runtime defaults so the footer version now follows the deployed frontend image tag (`latest` by default, or a pinned `FRONTEND_IMAGE_TAG` when provided).

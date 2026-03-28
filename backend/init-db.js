@@ -183,6 +183,8 @@ async function initDB() {
                 enabled BOOLEAN DEFAULT TRUE,
                 next_run TIMESTAMP,
                 last_run TIMESTAMP,
+                last_status VARCHAR(20),
+                last_error TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
