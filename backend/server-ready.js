@@ -1058,7 +1058,13 @@ async function initDatabase() {
                 question_count INT DEFAULT 1,
                 schedule_kind VARCHAR(20) NOT NULL,
                 interval_minutes INT,
+                interval_min_minutes INT,
+                interval_max_minutes INT,
                 daily_time VARCHAR(5),
+                comment_min_count INT,
+                comment_max_count INT,
+                current_comment_count INT DEFAULT 0,
+                next_comment_target INT,
                 enabled BOOLEAN DEFAULT TRUE,
                 next_run TIMESTAMP,
                 last_run TIMESTAMP,
@@ -1232,7 +1238,13 @@ async function initDatabase() {
                 question_count INT DEFAULT 1,
                 schedule_kind VARCHAR(20) NOT NULL,
                 interval_minutes INT,
+                interval_min_minutes INT,
+                interval_max_minutes INT,
                 daily_time VARCHAR(5),
+                comment_min_count INT,
+                comment_max_count INT,
+                current_comment_count INT DEFAULT 0,
+                next_comment_target INT,
                 enabled BOOLEAN DEFAULT TRUE,
                 next_run TIMESTAMP,
                 last_run TIMESTAMP,
@@ -1240,6 +1252,12 @@ async function initDatabase() {
                 last_error TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS interval_min_minutes INT`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS interval_max_minutes INT`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS comment_min_count INT`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS comment_max_count INT`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS current_comment_count INT DEFAULT 0`,
+            `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS next_comment_target INT`,
             `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS last_status VARCHAR(20)`,
             `ALTER TABLE discord_trivia_schedules ADD COLUMN IF NOT EXISTS last_error TEXT`,
             `CREATE TABLE IF NOT EXISTS discord_trivia_sessions (
@@ -1509,6 +1527,12 @@ async function getDiscordBotSettingsSnapshot() {
 function computeDiscordScheduleNextRun(schedule, fromDate = new Date()) {
     const kind = String(schedule?.schedule_kind || '').toLowerCase();
     const from = new Date(fromDate);
+    if (kind === 'random_interval') {
+        const minMinutes = Math.max(1, Number(schedule?.interval_min_minutes) || 0);
+        const maxMinutes = Math.max(minMinutes, Number(schedule?.interval_max_minutes) || minMinutes);
+        const selectedMinutes = Math.floor(Math.random() * (maxMinutes - minMinutes + 1)) + minMinutes;
+        return new Date(from.getTime() + selectedMinutes * 60 * 1000);
+    }
     if (kind === 'interval') {
         const mins = Math.max(1, Number(schedule?.interval_minutes) || 0);
         return new Date(from.getTime() + mins * 60 * 1000);
@@ -1522,7 +1546,22 @@ function computeDiscordScheduleNextRun(schedule, fromDate = new Date()) {
         if (next <= from) next.setDate(next.getDate() + 1);
         return next;
     }
+    if (kind === 'comment_range') {
+        return null;
+    }
     return null;
+}
+
+function randomIntInclusive(min, max) {
+    const safeMin = Math.min(min, max);
+    const safeMax = Math.max(min, max);
+    return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
+}
+
+function computeDiscordCommentTarget(schedule) {
+    const minCount = Math.max(1, Number(schedule?.comment_min_count) || 1);
+    const maxCount = Math.max(minCount, Number(schedule?.comment_max_count) || minCount);
+    return randomIntInclusive(minCount, maxCount);
 }
 
 async function collectSnapshot() {
@@ -1575,7 +1614,7 @@ async function applySnapshot(snapshot, mode = 'replace') {
         image_settings: ['id','max_image_kb','updated_at'],
         discord_sso_settings: ['id','enabled','client_id','client_secret','redirect_uri','updated_at'],
         discord_bot_settings: ['id','enabled','api_token','public_app_url','service_url','invite_url','updated_at'],
-        discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','daily_time','enabled','next_run','last_run','last_status','last_error','created_at'],
+        discord_trivia_schedules: ['id','guild_id','channel_id','category_id','question_count','schedule_kind','interval_minutes','interval_min_minutes','interval_max_minutes','daily_time','comment_min_count','comment_max_count','current_comment_count','next_comment_target','enabled','next_run','last_run','last_status','last_error','created_at'],
         discord_trivia_sessions: ['id','guild_id','channel_id','message_id','question_id','category_id','mode','prompt_user_discord_id','close_after_seconds','closes_at','closed_at','created_at'],
         discord_trivia_answers: ['id','session_id','guild_id','channel_id','question_id','category_id','discord_user_id','discord_username','user_id','selected_answer','is_correct','points_awarded','answered_at'],
         audit_logs: ['id','admin_id','action','details','created_at'],
@@ -2477,24 +2516,59 @@ app.post('/bot/schedules', async (req, res) => {
     const questionCount = Math.max(1, Math.min(20, parseInt(body.questionCount, 10) || 1));
     const scheduleKind = String(body.scheduleKind || '').trim().toLowerCase();
     const intervalMinutes = Math.max(1, parseInt(body.intervalMinutes, 10) || 0);
+    const intervalMinMinutes = Math.max(1, parseInt(body.intervalMinMinutes, 10) || 0);
+    const intervalMaxMinutes = Math.max(1, parseInt(body.intervalMaxMinutes, 10) || 0);
     const dailyTime = String(body.dailyTime || '').trim();
+    const commentMinCount = Math.max(1, parseInt(body.commentMinCount, 10) || 0);
+    const commentMaxCount = Math.max(1, parseInt(body.commentMaxCount, 10) || 0);
     if (!guildId || !channelId) return res.status(400).json({ error: 'guildId and channelId required' });
-    if (!['daily', 'interval'].includes(scheduleKind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
+    if (!['daily', 'interval', 'random_interval', 'comment_range'].includes(scheduleKind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
     if (scheduleKind === 'daily' && !/^\d{2}:\d{2}$/.test(dailyTime)) return res.status(400).json({ error: 'dailyTime must be HH:MM' });
     if (scheduleKind === 'interval' && intervalMinutes <= 0) return res.status(400).json({ error: 'intervalMinutes must be > 0' });
+    if (scheduleKind === 'random_interval' && (intervalMinMinutes <= 0 || intervalMaxMinutes <= 0)) return res.status(400).json({ error: 'intervalMinMinutes and intervalMaxMinutes must be > 0' });
+    if (scheduleKind === 'comment_range' && (commentMinCount <= 0 || commentMaxCount <= 0)) return res.status(400).json({ error: 'commentMinCount and commentMaxCount must be > 0' });
     try {
         if (!Number.isFinite(categoryId) && categoryName) {
             const cat = await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1) AND disabled=FALSE LIMIT 1', [categoryName]);
             if (!cat.rows.length) return res.status(400).json({ error: 'Category not found' });
             categoryId = cat.rows[0].id;
         }
-        const nextRun = computeDiscordScheduleNextRun({ schedule_kind: scheduleKind, interval_minutes: intervalMinutes, daily_time: dailyTime });
+        const normalizedIntervalMin = scheduleKind === 'random_interval' ? Math.min(intervalMinMinutes, intervalMaxMinutes) : null;
+        const normalizedIntervalMax = scheduleKind === 'random_interval' ? Math.max(intervalMinMinutes, intervalMaxMinutes) : null;
+        const normalizedCommentMin = scheduleKind === 'comment_range' ? Math.min(commentMinCount, commentMaxCount) : null;
+        const normalizedCommentMax = scheduleKind === 'comment_range' ? Math.max(commentMinCount, commentMaxCount) : null;
+        const nextCommentTarget = scheduleKind === 'comment_range'
+            ? computeDiscordCommentTarget({ comment_min_count: normalizedCommentMin, comment_max_count: normalizedCommentMax })
+            : null;
+        const nextRun = computeDiscordScheduleNextRun({
+            schedule_kind: scheduleKind,
+            interval_minutes: intervalMinutes,
+            interval_min_minutes: normalizedIntervalMin,
+            interval_max_minutes: normalizedIntervalMax,
+            daily_time: dailyTime
+        });
         const r = await pool.query(
             `INSERT INTO discord_trivia_schedules (
-                guild_id, channel_id, category_id, question_count, schedule_kind, interval_minutes, daily_time, enabled, next_run
-             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                guild_id, channel_id, category_id, question_count, schedule_kind, interval_minutes, interval_min_minutes, interval_max_minutes, daily_time, comment_min_count, comment_max_count, current_comment_count, next_comment_target, enabled, next_run
+             ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
              RETURNING *`,
-            [guildId, channelId, categoryId, questionCount, scheduleKind, scheduleKind === 'interval' ? intervalMinutes : null, scheduleKind === 'daily' ? dailyTime : null, true, nextRun]
+            [
+                guildId,
+                channelId,
+                categoryId,
+                questionCount,
+                scheduleKind,
+                scheduleKind === 'interval' ? intervalMinutes : null,
+                normalizedIntervalMin,
+                normalizedIntervalMax,
+                scheduleKind === 'daily' ? dailyTime : null,
+                normalizedCommentMin,
+                normalizedCommentMax,
+                scheduleKind === 'comment_range' ? 0 : null,
+                nextCommentTarget,
+                true,
+                nextRun
+            ]
         );
         const created = await pool.query(
             `SELECT s.*, c.name AS category_name
@@ -2513,8 +2587,11 @@ app.patch('/bot/schedules/:id', async (req, res) => {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
     const body = req.body || {};
+    const guildId = String(body.guildId || '').trim() || null;
     try {
-        const current = await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1', [id]);
+        const current = guildId
+            ? await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1 AND guild_id=$2', [id, guildId])
+            : await pool.query('SELECT * FROM discord_trivia_schedules WHERE id=$1', [id]);
         if (!current.rows.length) return res.status(404).json({ error: 'Schedule not found' });
         const row = current.rows[0];
         let nextCategoryId = body.categoryId === null ? null : (body.categoryId !== undefined ? parseInt(body.categoryId, 10) : row.category_id);
@@ -2525,25 +2602,69 @@ app.patch('/bot/schedules/:id', async (req, res) => {
             nextCategoryId = cat.rows[0].id;
         }
         const next = {
+            channel_id: body.channelId !== undefined ? String(body.channelId || '').trim() : row.channel_id,
             category_id: nextCategoryId,
             question_count: body.questionCount !== undefined ? Math.max(1, Math.min(20, parseInt(body.questionCount, 10) || row.question_count)) : row.question_count,
             schedule_kind: body.scheduleKind ? String(body.scheduleKind).trim().toLowerCase() : row.schedule_kind,
             interval_minutes: body.intervalMinutes !== undefined ? Math.max(1, parseInt(body.intervalMinutes, 10) || row.interval_minutes || 1) : row.interval_minutes,
+            interval_min_minutes: body.intervalMinMinutes !== undefined ? Math.max(1, parseInt(body.intervalMinMinutes, 10) || row.interval_min_minutes || 1) : row.interval_min_minutes,
+            interval_max_minutes: body.intervalMaxMinutes !== undefined ? Math.max(1, parseInt(body.intervalMaxMinutes, 10) || row.interval_max_minutes || 1) : row.interval_max_minutes,
             daily_time: body.dailyTime !== undefined ? String(body.dailyTime || '').trim() : row.daily_time,
+            comment_min_count: body.commentMinCount !== undefined ? Math.max(1, parseInt(body.commentMinCount, 10) || row.comment_min_count || 1) : row.comment_min_count,
+            comment_max_count: body.commentMaxCount !== undefined ? Math.max(1, parseInt(body.commentMaxCount, 10) || row.comment_max_count || 1) : row.comment_max_count,
+            current_comment_count: row.current_comment_count,
+            next_comment_target: row.next_comment_target,
             enabled: typeof body.enabled === 'boolean' ? body.enabled : row.enabled,
         };
-        if (!['daily', 'interval'].includes(next.schedule_kind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
+        if (!next.channel_id) return res.status(400).json({ error: 'channelId is required' });
+        if (!['daily', 'interval', 'random_interval', 'comment_range'].includes(next.schedule_kind)) return res.status(400).json({ error: 'Invalid scheduleKind' });
         if (next.schedule_kind === 'daily' && !/^\d{2}:\d{2}$/.test(String(next.daily_time || ''))) return res.status(400).json({ error: 'dailyTime must be HH:MM' });
         if (next.schedule_kind === 'interval' && (!Number.isFinite(Number(next.interval_minutes)) || Number(next.interval_minutes) <= 0)) {
             return res.status(400).json({ error: 'intervalMinutes must be > 0' });
         }
+        if (next.schedule_kind === 'random_interval' && (!Number.isFinite(Number(next.interval_min_minutes)) || !Number.isFinite(Number(next.interval_max_minutes)) || Number(next.interval_min_minutes) <= 0 || Number(next.interval_max_minutes) <= 0)) {
+            return res.status(400).json({ error: 'intervalMinMinutes and intervalMaxMinutes must be > 0' });
+        }
+        if (next.schedule_kind === 'comment_range' && (!Number.isFinite(Number(next.comment_min_count)) || !Number.isFinite(Number(next.comment_max_count)) || Number(next.comment_min_count) <= 0 || Number(next.comment_max_count) <= 0)) {
+            return res.status(400).json({ error: 'commentMinCount and commentMaxCount must be > 0' });
+        }
+        if (next.schedule_kind === 'random_interval') {
+            const normalizedMin = Math.min(Number(next.interval_min_minutes), Number(next.interval_max_minutes));
+            const normalizedMax = Math.max(Number(next.interval_min_minutes), Number(next.interval_max_minutes));
+            next.interval_min_minutes = normalizedMin;
+            next.interval_max_minutes = normalizedMax;
+        }
+        if (next.schedule_kind === 'comment_range') {
+            const normalizedMin = Math.min(Number(next.comment_min_count), Number(next.comment_max_count));
+            const normalizedMax = Math.max(Number(next.comment_min_count), Number(next.comment_max_count));
+            next.comment_min_count = normalizedMin;
+            next.comment_max_count = normalizedMax;
+            next.current_comment_count = 0;
+            next.next_comment_target = computeDiscordCommentTarget(next);
+        }
         const nextRun = next.enabled ? computeDiscordScheduleNextRun(next) : null;
         const r = await pool.query(
             `UPDATE discord_trivia_schedules
-             SET category_id=$2, question_count=$3, schedule_kind=$4, interval_minutes=$5, daily_time=$6, enabled=$7, next_run=$8
+             SET channel_id=$2, category_id=$3, question_count=$4, schedule_kind=$5, interval_minutes=$6, interval_min_minutes=$7, interval_max_minutes=$8, daily_time=$9, comment_min_count=$10, comment_max_count=$11, current_comment_count=$12, next_comment_target=$13, enabled=$14, next_run=$15
              WHERE id=$1
              RETURNING *`,
-            [id, next.category_id, next.question_count, next.schedule_kind, next.schedule_kind === 'interval' ? next.interval_minutes : null, next.schedule_kind === 'daily' ? next.daily_time : null, next.enabled, nextRun]
+            [
+                id,
+                next.channel_id,
+                next.category_id,
+                next.question_count,
+                next.schedule_kind,
+                next.schedule_kind === 'interval' ? next.interval_minutes : null,
+                next.schedule_kind === 'random_interval' ? next.interval_min_minutes : null,
+                next.schedule_kind === 'random_interval' ? next.interval_max_minutes : null,
+                next.schedule_kind === 'daily' ? next.daily_time : null,
+                next.schedule_kind === 'comment_range' ? next.comment_min_count : null,
+                next.schedule_kind === 'comment_range' ? next.comment_max_count : null,
+                next.schedule_kind === 'comment_range' ? next.current_comment_count : null,
+                next.schedule_kind === 'comment_range' ? next.next_comment_target : null,
+                next.enabled,
+                nextRun
+            ]
         );
         const updated = await pool.query(
             `SELECT s.*, c.name AS category_name
@@ -2584,12 +2705,22 @@ app.post('/bot/schedules/:id/mark-run', async (req, res) => {
         if (!current.rows.length) return res.status(404).json({ error: 'Schedule not found' });
         const row = current.rows[0];
         const nextRun = row.enabled ? computeDiscordScheduleNextRun(row, new Date()) : null;
+        const nextCommentTarget = row.enabled && row.schedule_kind === 'comment_range'
+            ? computeDiscordCommentTarget(row)
+            : row.next_comment_target;
         const r = await pool.query(
             `UPDATE discord_trivia_schedules
-             SET last_run=NOW(), next_run=$2, last_status=$3, last_error=$4
+             SET last_run=NOW(), next_run=$2, current_comment_count=$3, next_comment_target=$4, last_status=$5, last_error=$6
              WHERE id=$1
              RETURNING *`,
-            [id, nextRun, status === 'failed' ? 'failed' : 'success', status === 'failed' ? errorMessage : null]
+            [
+                id,
+                nextRun,
+                row.schedule_kind === 'comment_range' ? 0 : row.current_comment_count,
+                nextCommentTarget,
+                status === 'failed' ? 'failed' : 'success',
+                status === 'failed' ? errorMessage : null
+            ]
         );
         const updated = await pool.query(
             `SELECT s.*, c.name AS category_name
@@ -2599,6 +2730,57 @@ app.post('/bot/schedules/:id/mark-run', async (req, res) => {
             [r.rows[0].id]
         );
         res.json(updated.rows[0]);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/bot/schedules/comment-event', async (req, res) => {
+    const bot = await requireBot(req, res);
+    if (!bot) return;
+    const body = req.body || {};
+    const guildId = String(body.guildId || '').trim();
+    const channelId = String(body.channelId || '').trim();
+    if (!guildId || !channelId) return res.status(400).json({ error: 'guildId and channelId required' });
+    try {
+        const current = await pool.query(
+            `SELECT * FROM discord_trivia_schedules
+             WHERE guild_id=$1
+               AND channel_id=$2
+               AND enabled=TRUE
+               AND schedule_kind='comment_range'
+             ORDER BY id ASC`,
+            [guildId, channelId]
+        );
+        if (!current.rows.length) {
+            res.json([]);
+            return;
+        }
+        const dueIds = [];
+        for (const row of current.rows) {
+            const target = Number.isFinite(Number(row.next_comment_target))
+                ? Number(row.next_comment_target)
+                : computeDiscordCommentTarget(row);
+            const nextCount = Number(row.current_comment_count || 0) + 1;
+            await pool.query(
+                `UPDATE discord_trivia_schedules
+                 SET current_comment_count=$2, next_comment_target=$3
+                 WHERE id=$1`,
+                [row.id, nextCount, target]
+            );
+            if (nextCount >= target) dueIds.push(row.id);
+        }
+        if (!dueIds.length) {
+            res.json([]);
+            return;
+        }
+        const due = await pool.query(
+            `SELECT s.*, c.name AS category_name
+             FROM discord_trivia_schedules s
+             LEFT JOIN categories c ON c.id = s.category_id
+             WHERE s.id = ANY($1::int[])
+             ORDER BY s.id ASC`,
+            [dueIds]
+        );
+        res.json(due.rows);
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
