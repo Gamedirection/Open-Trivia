@@ -589,7 +589,7 @@ export default function SharePlay() {
                                             {currentQuestion.complexity  && <span style={{ background: COMPLEXITY_COLOR[currentQuestion.complexity] || '#888', color: '#fff', borderRadius: '8px', padding: '3px 12px', fontSize: '0.85rem', textTransform: 'capitalize' }}>{currentQuestion.complexity}</span>}
                                             {settings.showVoteCount && <span style={{ color: '#8b949e', fontSize: '0.9rem', alignSelf: 'center' }}>{totalVoters}/{players.length} voted</span>}
                                         </div>
-                                        <p style={{ fontSize: 'clamp(1.2rem, 2.5vw, 1.8rem)', fontWeight: '600', margin: 0, lineHeight: 1.4, color: '#f0f6fc' }}>{currentQuestion.text}</p>
+                                        <p style={{ fontSize: 'clamp(1.4rem, 3vw, 2.4rem)', fontWeight: '600', margin: 0, lineHeight: 1.4, color: '#f0f6fc' }}>{currentQuestion.text}</p>
                                     </div>
                                     <div style={{ marginLeft: '20px', flexShrink: 0 }}>
                                         <TimerRing timeLeft={timeLeft} total={settings.timerSeconds} />
@@ -605,7 +605,7 @@ export default function SharePlay() {
                                 {currentQuestion.imageUrl && <img src={currentQuestion.imageUrl} alt="" style={{ maxHeight: '180px', objectFit: 'contain', borderRadius: '10px', alignSelf: 'flex-start' }} />}
 
                                 {/* Answer grid */}
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', flex: 1 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: '14px', flex: 1, minHeight: 0 }}>
                                     {currentQuestion.options.map((opt, idx) => {
                                         const label    = String.fromCharCode(65 + idx);
                                         const selected = myVote === opt.key;
@@ -615,9 +615,9 @@ export default function SharePlay() {
                                         return (
                                             <button key={opt.key} onClick={() => vote(opt.key)}
                                                 disabled={!!myVote && !settings.allowChangeGuess}
-                                                style={{ background: selected ? '#1f6feb' : '#21262d', border: selected ? '2px solid #58a6ff' : '2px solid #30363d', borderRadius: '12px', padding: '16px 20px', color: '#e6edf3', cursor: 'pointer', textAlign: 'left', fontSize: 'clamp(0.9rem, 1.5vw, 1.1rem)', transition: 'all 0.15s' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: settings.showLiveVotes ? '8px' : 0 }}>
-                                                    <span style={{ background: selected ? '#58a6ff' : '#30363d', color: selected ? '#0d1117' : '#8b949e', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>{label}</span>
+                                                style={{ background: selected ? '#1f6feb' : '#21262d', border: selected ? '2px solid #58a6ff' : '2px solid #30363d', borderRadius: '12px', padding: '12px 16px', color: '#e6edf3', cursor: 'pointer', textAlign: 'center', fontSize: 'clamp(1.1rem, 2vw, 1.5rem)', transition: 'all 0.15s', display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', marginBottom: settings.showLiveVotes ? '8px' : '0', width: '100%' }}>
+                                                    <span style={{ background: selected ? '#58a6ff' : '#30363d', color: selected ? '#0d1117' : '#8b949e', borderRadius: '50%', width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1.1rem', flexShrink: 0, marginBottom: '8px' }}>{label}</span>
                                                     <span style={{ flex: 1 }}>{opt.text}</span>
                                                     {settings.showLiveVotes && count > 0 && <span style={{ color: '#8b949e', fontSize: '0.85rem' }}>{count}</span>}
                                                 </div>
@@ -660,7 +660,7 @@ export default function SharePlay() {
                                     </div>
                                 )}
 
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', flex: 1 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gridTemplateRows: '1fr 1fr', gap: '12px', flex: 1, minHeight: 0 }}>
                                     {currentQuestion.options.map((opt, idx) => {
                                         const isCorrect = opt.key === roundResult.correctAnswer;
                                         const isMyVote  = roundResult.myResult?.answer === opt.key;
@@ -669,9 +669,9 @@ export default function SharePlay() {
                                         const voters    = roundResult.details?.[opt.key] || [];
                                         return (
                                             <div key={opt.key} style={{ background: isCorrect ? '#1a3a1a' : '#161b22', border: `2px solid ${isCorrect ? tvCorrectColor : '#30363d'}`, borderRadius: '12px', padding: '14px 18px' }}>
-                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                                                    <span style={{ background: isCorrect ? tvCorrectColor : '#30363d', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', flexShrink: 0 }}>{String.fromCharCode(65 + idx)}</span>
-                                                    <span style={{ flex: 1, color: isCorrect ? '#56d364' : '#e6edf3', fontWeight: isCorrect ? 'bold' : 'normal' }}>{isMyVote ? '▶ ' : ''}{opt.text}</span>
+                                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', marginBottom: '8px', textAlign: 'center' }}>
+                                                    <span style={{ background: isCorrect ? tvCorrectColor : '#30363d', color: '#fff', borderRadius: '50%', width: '44px', height: '44px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '1rem', flexShrink: 0 }}>{String.fromCharCode(65 + idx)}</span>
+                                                    <span style={{ flex: 1, color: isCorrect ? '#56d364' : '#e6edf3', fontWeight: isCorrect ? 'bold' : 'normal', textAlign: 'center' }}>{isMyVote ? '▶ ' : ''}{opt.text}</span>
                                                     <span style={{ color: '#8b949e', fontSize: '0.9rem' }}>{count} ({pct}%)</span>
                                                 </div>
                                                 <div style={{ height: '6px', background: '#21262d', borderRadius: '3px', overflow: 'hidden' }}>
