@@ -179,7 +179,7 @@ export default function ResetPasswordPage() {
                 <p style={{ textAlign: 'center', color: '#888', fontSize: '0.9rem', marginBottom: '28px' }}>
                     {step === 0 && 'Enter the token from your reset email, or paste the full link into your browser.'}
                     {step === 1 && 'Choose a new password for your account.'}
-                    {step === 2 && 'All done — you can now sign in with your new password.'}
+                    {step === 2 && 'All done - you can now sign in with your new password.'}
                 </p>
 
                 <Steps current={step} />
@@ -196,7 +196,7 @@ export default function ResetPasswordPage() {
                     </div>
                 )}
 
-                {/* ── STEP 0 — Token entry ── */}
+                {/* ── STEP 0 - Token entry ── */}
                 {step === 0 && (
                     <form onSubmit={handleTokenSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                         <div>
@@ -232,10 +232,10 @@ export default function ResetPasswordPage() {
                     </form>
                 )}
 
-                {/* ── STEP 1 — New password ── */}
+                {/* ── STEP 1 - New password ── */}
                 {step === 1 && (
                     <form onSubmit={handlePasswordSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                        {/* Token summary — collapsed but editable */}
+                        {/* Token summary - collapsed but editable */}
                         <div style={{
                             backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f8f9fa',
                             borderRadius: '8px', padding: '10px 14px',
@@ -337,7 +337,7 @@ export default function ResetPasswordPage() {
                     </form>
                 )}
 
-                {/* ── STEP 2 — Success ── */}
+                {/* ── STEP 2 - Success ── */}
                 {step === 2 && (
                     <div style={{ textAlign: 'center' }}>
                         <div style={{ fontSize: '56px', marginBottom: '16px' }}>🎉</div>

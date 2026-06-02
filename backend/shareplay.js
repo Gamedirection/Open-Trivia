@@ -478,7 +478,7 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
                 if (room.players.size === 0) {
                     room.lastEmptyAt = Date.now();
                     if (!room.isLive) {
-                        // Give it a moment then check — it'll be cleaned by the interval
+                        // Give it a moment then check - it'll be cleaned by the interval
                         io.to(currentCode).emit('players_update', { players: [] });
                     }
                 } else {
@@ -576,7 +576,7 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             const allVoted = room.votes.size >= room.players.size && room.players.size > 0;
             if (allVoted) {
                 if (!room.allowChangeGuess) {
-                    // End immediately — nobody can change anyway
+                    // End immediately - nobody can change anyway
                     if (room.roundTimer)    { clearTimeout(room.roundTimer);    room.roundTimer = null; }
                     if (room.earlyEndTimer) { clearTimeout(room.earlyEndTimer); room.earlyEndTimer = null; }
                     endRound(currentCode, pool, io);

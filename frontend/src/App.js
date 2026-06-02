@@ -204,7 +204,7 @@ const LoginModal = () => {
             if (res.data.emailSent) {
                 setSuccess('📧 Reset link sent! Check your inbox (and spam folder).');
             } else if (res.data.token) {
-                // Dev mode — no SMTP. Direct them to the reset page with the token in the URL.
+                // Dev mode - no SMTP. Direct them to the reset page with the token in the URL.
                 const resetUrl = `/reset-password?reset_token=${res.data.token}`;
                 setSuccess(
                     <span>
@@ -463,7 +463,7 @@ function App() {
             <Router>
                 <RouteLoader />
                 <Routes>
-                    {/* Standalone reset page — no app chrome */}
+                    {/* Standalone reset page - no app chrome */}
                     <Route path="/reset-password" element={<ResetPasswordPage />} />
                     <Route path="/auth/discord/callback" element={<DiscordAuthCallback />} />
 

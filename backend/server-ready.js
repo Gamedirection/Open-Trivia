@@ -753,7 +753,7 @@ async function sendResetEmail(toEmail, resetToken) {
     const transport = buildTransport();
 
     if (!transport) {
-        // No SMTP configured — log token so dev environments still work
+        // No SMTP configured - log token so dev environments still work
         console.warn('⚠️  SMTP not configured. Reset token (dev only):');
         console.warn(`    Email : ${toEmail}`);
         console.warn(`    Token : ${resetToken}`);
@@ -763,7 +763,7 @@ async function sendResetEmail(toEmail, resetToken) {
 
     const html = `
         <div style="font-family:sans-serif;max-width:480px;margin:0 auto">
-            <h2 style="color:#007bff">🏆 Open-Trivia — Password Reset</h2>
+            <h2 style="color:#007bff">🏆 Open-Trivia - Password Reset</h2>
             <p>A password reset was requested for <strong>${toEmail}</strong>.</p>
             <p>Click the button below to set a new password. This link expires in <strong>${expiryHr}</strong>.</p>
             <p style="text-align:center;margin:30px 0">
@@ -782,7 +782,7 @@ async function sendResetEmail(toEmail, resetToken) {
     await transport.sendMail({
         from: fromAddr,
         to: toEmail,
-        subject: 'Open-Trivia — Reset your password',
+        subject: 'Open-Trivia - Reset your password',
         html,
         text: `Reset your Open-Trivia password by visiting: ${resetUrl}\n\nThis link expires in ${expiryHr}. If you didn't request this, ignore this email.`,
     });
@@ -1339,7 +1339,7 @@ async function initDatabase() {
             );
             console.log(`
 ╔══════════════════════════════════════════════════════════╗
-║   🆕 ADMIN ACCOUNT CREATED — SAVE THESE CREDENTIALS     ║
+║   🆕 ADMIN ACCOUNT CREATED - SAVE THESE CREDENTIALS     ║
 ║                                                          ║
 ║   Email    : ${adminEmail.padEnd(42)}║
 ║   Password : ${adminPassword.padEnd(42)}║
@@ -1880,7 +1880,7 @@ app.post('/auth/request-reset', async (req, res) => {
             success: true,
             emailSent: !result.devMode,
             message: result.devMode
-                ? 'No email server configured — token returned for development use.'
+                ? 'No email server configured - token returned for development use.'
                 : 'Reset link sent! Check your inbox.',
             // Only populated in dev mode; undefined (omitted) when email was sent
             ...(result.devMode ? { token: result.token, resetUrl: result.url } : {}),
@@ -2263,7 +2263,7 @@ app.post('/game/submit', async (req, res) => {
         const u = authUser;
 
         if (u) {
-            // Authenticated user — track normally
+            // Authenticated user - track normally
             await pool.query(
                 'INSERT INTO game_sessions (user_id,question_id,category_id,selected_answer,is_correct,points) VALUES ($1,$2,$3,$4,$5,$6)',
                 [u.id, questionId, categoryId, selectedAnswer, isCorrect, points]
@@ -2300,7 +2300,7 @@ app.post('/game/anonymous-session', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Report a question — rate-limited for guests and users
+// Report a question - rate-limited for guests and users
 app.post('/game/report', async (req, res) => {
     const u = getTokenUser(req);
     const { questionId, reason } = req.body;
@@ -2341,7 +2341,7 @@ app.post('/game/report', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── LEADERBOARD — excludes anonymous users and admins ──────────────────────────
+// ── LEADERBOARD - excludes anonymous users and admins ──────────────────────────
 app.get('/leaderboard', async (req, res) => {
     const { categoryId, timeframe, includeAnonymous } = req.query;
     const catParsed = categoryId ? parseInt(categoryId, 10) : NaN;
@@ -3292,7 +3292,7 @@ app.post('/me/profile/add-email', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── PENDING QUESTIONS — rate-limited for guests and users ─────────────────────
+// ── PENDING QUESTIONS - rate-limited for guests and users ─────────────────────
 app.post('/pending-questions', async (req, res) => {
     const u = getTokenUser(req);
     const { categoryName, text, options, correctAnswer, complexity, imageUrl } = req.body;

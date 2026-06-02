@@ -113,7 +113,7 @@ services:
       # - SMTP_USER=your-brevo-login
       # - SMTP_PASS=your-brevo-smtp-key
 
-      # Self-hosted (e.g. Postfix, Mailcow) — no auth:
+      # Self-hosted (e.g. Postfix, Mailcow) - no auth:
       # - SMTP_HOST=mail.yourdomain.com
       # - SMTP_PORT=25
       # - SMTP_SECURE=false

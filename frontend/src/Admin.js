@@ -947,7 +947,7 @@ export default function Admin() {
                                         <h3 style={{ margin: 0 }}>
                                             {selCat.name}
                                             <span style={{ marginLeft: '10px', fontSize: '14px', color: '#888', fontWeight: 'normal' }}>
-                                                — {filteredQuestions.length} matching question{filteredQuestions.length !== 1 ? 's' : ''}
+                                                - {filteredQuestions.length} matching question{filteredQuestions.length !== 1 ? 's' : ''}
                                             </span>
                                         </h3>
                                         {selCat.disabled && <Badge color="#6c757d" text="category disabled" />}
@@ -1348,7 +1348,7 @@ export default function Admin() {
                                                 <td style={{ padding: '10px 8px', color: 'var(--text-color)' }}>
                                                     {u.games_played > 0
                                                         ? `${u.correct_answers} (${Math.round(u.correct_answers / u.games_played * 100)}%)`
-                                                        : '—'}
+                                                        : '-'}
                                                 </td>
                                                 <td style={{ padding: '10px 8px' }}>
                                                     {isBlocked ? (
@@ -1406,7 +1406,7 @@ export default function Admin() {
                             {showAnon && anonUsers.length > 0 && (
                                 <div style={{ marginTop: '24px' }}>
                                     <h4 style={{ color: '#888', marginBottom: '10px', fontWeight: 'normal' }}>
-                                        👤 Anonymous Sessions ({anonUsers.length}) — excluded from leaderboard
+                                        👤 Anonymous Sessions ({anonUsers.length}) - excluded from leaderboard
                                     </h4>
                                     <div style={{ overflowX: 'auto' }}>
                                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px', opacity: 0.75 }}>
@@ -1427,7 +1427,7 @@ export default function Admin() {
                                                         <td style={{ padding: '8px', color: '#888' }}>
                                                             {u.games_played > 0
                                                                 ? `${u.correct_answers} (${Math.round(u.correct_answers / u.games_played * 100)}%)`
-                                                                : '—'}
+                                                                : '-'}
                                                         </td>
                                                     </tr>
                                                 ))}
@@ -1827,7 +1827,7 @@ export default function Admin() {
                                             <tr key={b.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                                                 <td style={{ padding: '8px' }}>{b.id}</td>
                                                 <td style={{ padding: '8px' }}>{new Date(b.created_at).toLocaleString()}</td>
-                                                <td style={{ padding: '8px' }}>{b.note || '—'}</td>
+                                                <td style={{ padding: '8px' }}>{b.note || '-'}</td>
                                                 <td style={{ padding: '8px' }}>
                                                     <button
                                                         className="btn"
@@ -1882,7 +1882,7 @@ export default function Admin() {
                                             <div>
                                                 <strong style={{ textTransform: 'capitalize' }}>{period}</strong>
                                                 <div style={{ fontSize: '12px', color: '#888' }}>
-                                                    Next run: {row?.next_run ? new Date(row.next_run).toLocaleString() : '—'}
+                                                    Next run: {row?.next_run ? new Date(row.next_run).toLocaleString() : '-'}
                                                 </div>
                                             </div>
                                             <button

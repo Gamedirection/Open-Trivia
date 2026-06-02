@@ -12,7 +12,7 @@ Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
 
 ## Key Features
-- **Share Play** — real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
+- **Share Play** - real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
 - Discord users can submit question suggestions directly from the bot for admin approval.
@@ -87,9 +87,9 @@ BOT_QUESTION_TIMEOUT_SECONDS=86400
 ```
 
 The bot lives in `services/open-trivia-discord` as a submodule. Configure the bot token/client ID in `.env`, start the `discord-bot` service, then use `/trivia`, `/leaderboard`, `/schedule-trivia`, and `/suggest-question` in Discord.
-The bot also supports `/categories` and `/help`, scheduler commands can target an optional category plus a selected Discord channel, incorrect Discord answers reveal the correct answer privately, and Discord-only players are created automatically in Open-Trivia on first answer so they can score immediately.
-Question suggestions submitted through Discord are flagged in the admin Review Queue as coming from the Discord bot.
-The admin Data section also exposes a Discord bot invite URL, defaulting to the configured Discord application authorization link.
+The bot also supports `/categories` and `/help`. Scheduler commands can target an optional category and a Discord channel. Wrong answers reveal the correct answer privately. Discord-only players are created in Open-Trivia on first answer so they score immediately.
+Discord question suggestions are flagged in the admin Review Queue with a Discord Bot badge.
+The admin Data section exposes a Discord bot invite URL, defaulting to the configured application authorization link.
 
 ### Scoring Config (optional)
 ```bash
@@ -115,7 +115,7 @@ DIFF_DOWN_THRESHOLD=0.8
 - Public legal pages: `/terms` and `/privacy`, with operator/contact details derived from the site domain unless overridden by env.
 
 ## Shared Collections
-Community packs can be browsed at `questions.trivia.gamedirection.net`.  
+Browse community packs at `questions.trivia.gamedirection.net`.  
 We recommend a public GitHub repo per collection and a README that links to other collections.  
 Template repo: https://github.com/Gamedirection/Open-Trivia-Questions.git  
 Security note: only import zips from sources you trust.

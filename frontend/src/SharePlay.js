@@ -416,7 +416,7 @@ export default function SharePlay() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div style={{ ...card, textAlign: 'center' }}>
                     <h2 style={{ margin: '0 0 6px' }}>Share Play</h2>
-                    <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>Real-time multiplayer trivia — join the live room or start your own.</p>
+                    <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>Real-time multiplayer trivia - join the live room or start your own.</p>
                     {!connected && <div style={{ color: '#dc3545', marginTop: '8px', fontSize: '0.85rem' }}>{connError || 'Connecting…'}</div>}
                 </div>
 
@@ -430,7 +430,7 @@ export default function SharePlay() {
                             <strong style={{ fontSize: '1.1rem' }}>Live Room</strong>
                         </div>
                         <p style={{ color: '#888', fontSize: '0.88rem', margin: '0 0 14px' }}>
-                            Always-on public game. Questions cycle continuously — join any time.
+                            Always-on public game. Questions cycle continuously - join any time.
                             {liveRoom && <span> <strong>{liveRoom.playerCount}</strong> player{liveRoom.playerCount !== 1 ? 's' : ''} currently playing.</span>}
                         </p>
                         <button style={btn('#28a745', { width: '100%', padding: '12px', fontSize: '1rem' })} onClick={joinLive} disabled={!connected}>
@@ -645,11 +645,11 @@ export default function SharePlay() {
                                     );
                                 })}
                             </div>
-                            {myVote && !settings.allowChangeGuess && <p style={{ textAlign: 'center', color: '#888', fontSize: '0.85rem', marginTop: '10px' }}>Answer locked — waiting for round to end.</p>}
+                            {myVote && !settings.allowChangeGuess && <p style={{ textAlign: 'center', color: '#888', fontSize: '0.85rem', marginTop: '10px' }}>Answer locked - waiting for round to end.</p>}
                             {myVote && settings.allowChangeGuess  && !earlyEndSecs && <p style={{ textAlign: 'center', color: '#888', fontSize: '0.85rem', marginTop: '10px' }}>You can change your answer before time runs out.</p>}
                             {earlyEndSecs !== null && (
                                 <div style={{ marginTop: '12px', padding: '10px 16px', borderRadius: '8px', background: '#fff3cd', color: '#856404', textAlign: 'center', fontWeight: 'bold', fontSize: '0.9rem' }}>
-                                    All players voted — ending in {earlyEndSecs}s unless someone changes their answer
+                                    All players voted - ending in {earlyEndSecs}s unless someone changes their answer
                                 </div>
                             )}
                         </div>
@@ -726,7 +726,7 @@ export default function SharePlay() {
                         </div>
                     )}
 
-                    {/* Vote count only — shown when showLiveVotes is off but showVoteCount is on */}
+                    {/* Vote count only - shown when showLiveVotes is off but showVoteCount is on */}
                     {phase === 'question' && !settings.showLiveVotes && settings.showVoteCount && (
                         <div style={{ ...card, padding: '14px', textAlign: 'center' }}>
                             <div style={{ fontSize: '0.78rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '8px', fontWeight: 'bold' }}>Votes In</div>
