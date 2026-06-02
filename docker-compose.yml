@@ -17,6 +17,10 @@ services:
       - backend
     environment:
       - REACT_APP_API_URL=/api
+      # Set REACT_APP_SOCKET_URL to the backend's public URL when a reverse proxy
+      # sits in front and drops WebSocket upgrades (nginx/Traefik/Caddy setups).
+      # Example: - REACT_APP_SOCKET_URL=https://trivia.yourdomain.com:3029
+      - REACT_APP_SOCKET_URL=${REACT_APP_SOCKET_URL:-}
       - REACT_APP_VERSION=${FRONTEND_IMAGE_TAG:-latest}
       - APP_IMAGE_TAG=${FRONTEND_IMAGE_TAG:-latest}
       - PUBLIC_APP_URL=${PUBLIC_APP_URL}

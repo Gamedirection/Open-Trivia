@@ -3,8 +3,12 @@ import { io } from 'socket.io-client';
 import axios from 'axios';
 import RequestCardModal from './RequestCardModal';
 
-const API_URL   = process.env.REACT_APP_API_URL || 'http://localhost:5000';
-const SOCKET_URL = (API_URL || '').startsWith('http') ? API_URL : window.location.origin;
+const API_URL    = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+// REACT_APP_SOCKET_URL lets production override the socket target directly
+// (needed when a front proxy drops WebSocket upgrades on the /socket.io path).
+// Falls back to: the API URL if absolute, or window.location.origin for proxy mode.
+const SOCKET_URL = process.env.REACT_APP_SOCKET_URL ||
+    ((API_URL || '').startsWith('http') ? API_URL : window.location.origin);
 const REST_BASE  = (API_URL || '').startsWith('http') ? API_URL.replace(/\/api\/?$/, '') : '';
 const LIVE_CODE  = 'LIVE';
 
