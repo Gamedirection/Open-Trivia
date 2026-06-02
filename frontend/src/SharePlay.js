@@ -171,6 +171,7 @@ export default function SharePlay() {
     const [phase, setPhase]         = useState('lobby');
     const [settings, setSettings]   = useState({ timerSeconds: 15, allowChangeGuess: true, showOtherGuesses: false, showLiveVotes: false, showVoteCount: true, showPlayerStats: true, showQualityRating: false, pointsCorrect: 5, pointsIncorrect: 1, timeBonus: 0.25, goldBonus: 5, silverBonus: 3, bronzeBonus: 1, categoryIds: [], isPublic: false });
     const [earlyEndSecs, setEarlyEndSecs] = useState(null);
+    const [tvMode, setTvMode] = useState(false);
 
     // Report / Suggest (persist across question changes intentionally)
     const [showRequestModal, setShowRequestModal] = useState(false);
@@ -328,6 +329,12 @@ export default function SharePlay() {
         document.addEventListener('mousedown', handler);
         return () => document.removeEventListener('mousedown', handler);
     }, [showReportMenu]);
+
+    useEffect(() => {
+        const handler = e => { if (e.key === 'Escape') setTvMode(false); };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, []);
 
     // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -526,6 +533,189 @@ export default function SharePlay() {
     const showAdminLivePanel = isAdmin && isLive;
     const showHostPanel      = isHost && !isLive;
 
+    // ── TV / Fullscreen Mode ───────────────────────────────────────────────────
+    if (tvMode) {
+        const tvBg    = '#0d1117';
+        const tvCard  = { background: '#161b22', border: '1px solid #30363d', borderRadius: '16px', padding: '24px' };
+        const tvBtn   = (bg, extra = {}) => ({ background: bg, color: '#fff', border: 'none', borderRadius: '10px', cursor: 'pointer', fontWeight: 'bold', padding: '12px 24px', fontSize: '1rem', ...extra });
+        const tvCorrectColor = '#238636';
+        const tvWrongColor   = '#6e7681';
+
+        return (
+            <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: tvBg, color: '#e6edf3', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'system-ui, sans-serif' }}>
+                {/* ── TV Header ── */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 28px', borderBottom: '1px solid #30363d', flexShrink: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                        <span style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#58a6ff' }}>Open-Trivia Share Play</span>
+                        {isLive
+                            ? <span style={{ background: '#238636', color: '#fff', borderRadius: '20px', padding: '4px 14px', fontSize: '0.85rem', fontWeight: 'bold' }}>● LIVE</span>
+                            : <div style={{ display: 'flex', alignItems: 'center', gap: '10px', background: '#21262d', borderRadius: '12px', padding: '6px 18px' }}>
+                                <span style={{ color: '#8b949e', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Code</span>
+                                <span style={{ fontFamily: 'monospace', fontSize: '2rem', fontWeight: 'bold', letterSpacing: '0.3em', color: '#f0f6fc' }}>{roomCode}</span>
+                              </div>
+                        }
+                        <span style={{ color: '#8b949e', fontSize: '0.9rem' }}>{players.length} player{players.length !== 1 ? 's' : ''}</span>
+                        {myPlayer && <span style={{ background: '#1f6feb', color: '#fff', borderRadius: '20px', padding: '4px 14px', fontSize: '0.85rem', fontWeight: 'bold' }}>You: {myPlayer.sessionScore} pts</span>}
+                    </div>
+                    <button onClick={() => setTvMode(false)} style={{ ...tvBtn('#21262d'), fontSize: '0.85rem', padding: '8px 16px' }}>✕ Exit TV  <span style={{ color: '#8b949e', marginLeft: '6px', fontSize: '0.75rem' }}>ESC</span></button>
+                </div>
+
+                {/* ── TV Body ── */}
+                <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 280px', gap: '20px', padding: '20px 28px', overflow: 'hidden' }}>
+
+                    {/* Center */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'hidden' }}>
+
+                        {phase === 'waiting' && (
+                            <div style={{ ...tvCard, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '20px' }}>
+                                {!isLive && (
+                                    <div style={{ textAlign: 'center' }}>
+                                        <div style={{ color: '#8b949e', fontSize: '1rem', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Join with code</div>
+                                        <div style={{ fontFamily: 'monospace', fontSize: '5rem', fontWeight: 'bold', letterSpacing: '0.4em', color: '#58a6ff' }}>{roomCode}</div>
+                                    </div>
+                                )}
+                                <div style={{ color: '#8b949e', fontSize: '1.2rem' }}>{statusMsg || 'Waiting for game to start…'}</div>
+                                {isHost && <button onClick={startGame} style={tvBtn('#238636', { fontSize: '1.2rem', padding: '16px 40px' })}>▶ Start Game</button>}
+                            </div>
+                        )}
+
+                        {phase === 'question' && currentQuestion && (
+                            <div style={{ ...tvCard, flex: 1, display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                                {/* Question meta + timer */}
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                                            {currentQuestion.categoryName && <span style={{ background: '#21262d', color: '#8b949e', borderRadius: '8px', padding: '3px 12px', fontSize: '0.85rem' }}>{currentQuestion.categoryName}</span>}
+                                            {currentQuestion.complexity  && <span style={{ background: COMPLEXITY_COLOR[currentQuestion.complexity] || '#888', color: '#fff', borderRadius: '8px', padding: '3px 12px', fontSize: '0.85rem', textTransform: 'capitalize' }}>{currentQuestion.complexity}</span>}
+                                            {settings.showVoteCount && <span style={{ color: '#8b949e', fontSize: '0.9rem', alignSelf: 'center' }}>{totalVoters}/{players.length} voted</span>}
+                                        </div>
+                                        <p style={{ fontSize: 'clamp(1.2rem, 2.5vw, 1.8rem)', fontWeight: '600', margin: 0, lineHeight: 1.4, color: '#f0f6fc' }}>{currentQuestion.text}</p>
+                                    </div>
+                                    <div style={{ marginLeft: '20px', flexShrink: 0 }}>
+                                        <TimerRing timeLeft={timeLeft} total={settings.timerSeconds} />
+                                    </div>
+                                </div>
+
+                                {earlyEndSecs !== null && (
+                                    <div style={{ background: '#3d2b00', border: '1px solid #d29922', borderRadius: '10px', padding: '12px 18px', color: '#d29922', fontWeight: 'bold', textAlign: 'center' }}>
+                                        All voted — ending in {earlyEndSecs}s
+                                    </div>
+                                )}
+
+                                {currentQuestion.imageUrl && <img src={currentQuestion.imageUrl} alt="" style={{ maxHeight: '180px', objectFit: 'contain', borderRadius: '10px', alignSelf: 'flex-start' }} />}
+
+                                {/* Answer grid */}
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', flex: 1 }}>
+                                    {currentQuestion.options.map((opt, idx) => {
+                                        const label    = String.fromCharCode(65 + idx);
+                                        const selected = myVote === opt.key;
+                                        const count    = vCounts[opt.key] || 0;
+                                        const pct      = totalVoters > 0 ? Math.round(count / totalVoters * 100) : 0;
+                                        const voters   = vDetails?.[opt.key] || [];
+                                        return (
+                                            <button key={opt.key} onClick={() => vote(opt.key)}
+                                                disabled={!!myVote && !settings.allowChangeGuess}
+                                                style={{ background: selected ? '#1f6feb' : '#21262d', border: selected ? '2px solid #58a6ff' : '2px solid #30363d', borderRadius: '12px', padding: '16px 20px', color: '#e6edf3', cursor: 'pointer', textAlign: 'left', fontSize: 'clamp(0.9rem, 1.5vw, 1.1rem)', transition: 'all 0.15s' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: settings.showLiveVotes ? '8px' : 0 }}>
+                                                    <span style={{ background: selected ? '#58a6ff' : '#30363d', color: selected ? '#0d1117' : '#8b949e', borderRadius: '50%', width: '28px', height: '28px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>{label}</span>
+                                                    <span style={{ flex: 1 }}>{opt.text}</span>
+                                                    {settings.showLiveVotes && count > 0 && <span style={{ color: '#8b949e', fontSize: '0.85rem' }}>{count}</span>}
+                                                </div>
+                                                {settings.showLiveVotes && (
+                                                    <div style={{ height: '4px', background: '#30363d', borderRadius: '2px', overflow: 'hidden' }}>
+                                                        <div style={{ height: '100%', width: `${pct}%`, background: '#58a6ff', transition: 'width 0.3s ease' }} />
+                                                    </div>
+                                                )}
+                                                {settings.showOtherGuesses && voters.length > 0 && (
+                                                    <div style={{ fontSize: '0.75rem', color: '#8b949e', marginTop: '5px' }}>{voters.slice(0, 4).join(', ')}{voters.length > 4 ? ` +${voters.length - 4}` : ''}</div>
+                                                )}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                {!settings.showLiveVotes && settings.showVoteCount && (
+                                    <div style={{ textAlign: 'center', color: '#8b949e', fontSize: '1rem' }}>
+                                        <strong style={{ fontSize: '1.4rem', color: '#58a6ff' }}>{totalVoters}</strong> / {players.length} voted
+                                        <div style={{ height: '6px', background: '#21262d', borderRadius: '3px', marginTop: '6px', overflow: 'hidden' }}>
+                                            <div style={{ height: '100%', width: `${players.length > 0 ? Math.round(totalVoters / players.length * 100) : 0}%`, background: '#238636', transition: 'width 0.3s' }} />
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {phase === 'results' && roundResult && currentQuestion && (
+                            <div style={{ ...tvCard, flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <h2 style={{ margin: 0, color: '#f0f6fc' }}>Round Results</h2>
+                                    <span style={{ color: '#8b949e' }}>Next in {resultsCountdown}s…</span>
+                                </div>
+                                <p style={{ fontSize: 'clamp(1rem, 2vw, 1.3rem)', fontWeight: '600', color: '#e6edf3', margin: 0 }}>{currentQuestion.text}</p>
+
+                                {roundResult.myResult && (
+                                    <div style={{ padding: '12px 18px', borderRadius: '10px', fontWeight: 'bold', fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '10px', background: roundResult.myResult.isCorrect ? '#1a3a1a' : '#3a1a1a', border: `1px solid ${roundResult.myResult.isCorrect ? '#238636' : '#da3633'}`, color: roundResult.myResult.isCorrect ? '#56d364' : '#f85149' }}>
+                                        {roundResult.myResult.isCorrect ? `✓ Correct! +${roundResult.myResult.points} pts` : `✗ Wrong. +${roundResult.myResult.points} pt`}
+                                        <MedalBadge medal={roundResult.myResult.medal} />
+                                    </div>
+                                )}
+
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', flex: 1 }}>
+                                    {currentQuestion.options.map((opt, idx) => {
+                                        const isCorrect = opt.key === roundResult.correctAnswer;
+                                        const isMyVote  = roundResult.myResult?.answer === opt.key;
+                                        const count     = roundResult.counts?.[opt.key] || 0;
+                                        const pct       = roundResult.totalVoters > 0 ? Math.round(count / roundResult.totalVoters * 100) : 0;
+                                        const voters    = roundResult.details?.[opt.key] || [];
+                                        return (
+                                            <div key={opt.key} style={{ background: isCorrect ? '#1a3a1a' : '#161b22', border: `2px solid ${isCorrect ? tvCorrectColor : '#30363d'}`, borderRadius: '12px', padding: '14px 18px' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                                                    <span style={{ background: isCorrect ? tvCorrectColor : '#30363d', color: '#fff', borderRadius: '50%', width: '26px', height: '26px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', fontSize: '0.8rem', flexShrink: 0 }}>{String.fromCharCode(65 + idx)}</span>
+                                                    <span style={{ flex: 1, color: isCorrect ? '#56d364' : '#e6edf3', fontWeight: isCorrect ? 'bold' : 'normal' }}>{isMyVote ? '▶ ' : ''}{opt.text}</span>
+                                                    <span style={{ color: '#8b949e', fontSize: '0.9rem' }}>{count} ({pct}%)</span>
+                                                </div>
+                                                <div style={{ height: '6px', background: '#21262d', borderRadius: '3px', overflow: 'hidden' }}>
+                                                    <div style={{ height: '100%', width: `${pct}%`, background: isCorrect ? tvCorrectColor : tvWrongColor, transition: 'width 0.4s' }} />
+                                                </div>
+                                                {settings.showOtherGuesses && voters.length > 0 && (
+                                                    <div style={{ fontSize: '0.75rem', color: '#8b949e', marginTop: '5px' }}>{voters.join(', ')}</div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Right: scoreboard */}
+                    <div style={{ ...tvCard, display: 'flex', flexDirection: 'column', gap: '10px', overflow: 'hidden' }}>
+                        <div style={{ fontSize: '0.78rem', color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 'bold', marginBottom: '4px' }}>Top Players</div>
+                        {players.length === 0 && <div style={{ color: '#8b949e', fontSize: '0.9rem' }}>Waiting…</div>}
+                        {players.map((p, i) => (
+                            <div key={p.userId || p.displayName} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: i < players.length - 1 ? '1px solid #21262d' : 'none', background: p.userId === user?.id ? 'rgba(31,111,235,0.1)' : 'transparent', borderRadius: '6px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                    <span style={{ color: i === 0 ? '#d29922' : i === 1 ? '#8b949e' : i === 2 ? '#cd7f32' : '#6e7681', fontWeight: 'bold', fontSize: '0.85rem', flexShrink: 0, width: '20px' }}>#{i + 1}</span>
+                                    {p.isHost && <span style={{ fontSize: '0.7rem' }}>👑</span>}
+                                    <span style={{ fontSize: '0.9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: p.userId === user?.id ? 'bold' : 'normal' }}>{p.displayName}</span>
+                                    {p.rating && <RatingBadge rating={p.rating} />}
+                                </div>
+                                <span style={{ fontWeight: 'bold', fontSize: '1rem', color: '#58a6ff', flexShrink: 0, marginLeft: '8px' }}>{p.sessionScore}</span>
+                            </div>
+                        ))}
+
+                        {!isLive && (
+                            <div style={{ marginTop: 'auto', paddingTop: '12px', borderTop: '1px solid #21262d', textAlign: 'center' }}>
+                                <div style={{ color: '#8b949e', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '6px' }}>Join code</div>
+                                <div style={{ fontFamily: 'monospace', fontSize: '2.2rem', fontWeight: 'bold', letterSpacing: '0.3em', color: '#58a6ff' }}>{roomCode}</div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div>
             {/* ── Room header ── */}
@@ -550,6 +740,7 @@ export default function SharePlay() {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     {myPlayer && <span style={{ padding: '4px 12px', borderRadius: '20px', background: 'var(--btn-primary,#007bff)', color: '#fff', fontWeight: 'bold', fontSize: '0.85rem' }}>Score: {myPlayer.sessionScore}</span>}
                     <span style={{ color: '#888', fontSize: '0.85rem' }}>{players.length} player{players.length !== 1 ? 's' : ''}</span>
+                    <button style={btn('#343a40', { padding: '6px 14px', fontSize: '0.85rem' })} onClick={() => setTvMode(true)} title="Fullscreen TV mode">📺 TV</button>
                     <button style={btn('#dc3545', { padding: '6px 14px', fontSize: '0.85rem' })} onClick={leaveRoom}>Leave</button>
                 </div>
             </div>

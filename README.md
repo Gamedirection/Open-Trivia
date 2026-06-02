@@ -39,6 +39,44 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Discord bot: separate Node service in `services/open-trivia-discord`.
 - Images: GHCR.
 
+## Share Play — Capacity & Scaling
+
+Share Play runs socket.io on the same Node.js process as the REST API. All room state lives in memory on one instance. These are rough estimates based on a single server.
+
+### Concurrent player estimates
+
+| Server | RAM / vCPU | Players | Rooms |
+|---|---|---|---|
+| Entry VPS ($6/mo) | 1 GB / 1 vCPU | ~200 | ~20 |
+| Standard VPS ($12/mo) | 2 GB / 2 vCPU | ~800 | ~80 |
+| Large VPS ($24/mo) | 4 GB / 2 vCPU | ~2 000 | ~200 |
+| Dedicated ($60/mo) | 16 GB / 4 vCPU | ~8 000 | ~800 |
+
+**What drives the limits:**
+- Each WebSocket connection uses ~30–80 KB RAM. A room with 50 players broadcasting every vote update is the main CPU cost.
+- Round-end scoring loops are O(votes) + N DB inserts per round — at high concurrency, DB becomes the first bottleneck.
+- The live room continuously runs regardless of player count, consuming one background timer + DB write per round.
+
+### Bottlenecks in order
+
+1. **Node.js event loop** — round-end broadcasts block briefly. Fine up to ~500 players in a single room; above that, rounds feel sluggish.
+2. **PostgreSQL** — default `max_connections = 100`. Add pgBouncer or raise the limit before 50+ concurrent rounds.
+3. **Memory** — room state + socket buffers. Monitor with `docker stats`.
+4. **Network** — vote broadcasts are small JSON; only an issue at thousands of concurrent voters.
+
+### Horizontal scaling (if you need it)
+
+Current architecture is single-instance only — room state is in memory, not shared. To scale past one server:
+
+1. Add **`socket.io-redis`** adapter so multiple Node instances share room state via Redis pub/sub.
+2. Put a **sticky-session** load balancer in front (nginx `ip_hash`, HAProxy, or Traefik `stickycookie`) so a client always hits the same instance.
+3. Run backend replicas: `docker service scale open-trivia_backend=3`.
+4. Add a **Redis** service to docker-compose and set `REDIS_URL` in the backend.
+
+A single well-sized VPS handles hundreds of simultaneous players comfortably for most hobby and small-community deployments without any of the above.
+
+---
+
 ## Quickstart (Docker Compose)
 ```bash
 docker compose up -d
