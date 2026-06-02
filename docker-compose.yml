@@ -9,10 +9,10 @@ services:
       - postgres_data:/var/lib/postgresql/data/
 
   frontend:
-    #image: ghcr.io/gamedirection/open-trivia-frontend:v0.3.2
+    #image: ghcr.io/gamedirection/open-trivia-frontend:v0.3.18
     build: ./frontend
     ports:
-      - "3000:3000"
+      - "3045:3000"
     depends_on:
       - backend
     environment:
@@ -32,7 +32,7 @@ services:
 #      - ./branding/logo.png:/app/public/brand/logo.png:ro
 
   backend:
-    #image: ghcr.io/gamedirection/open-trivia-backend:v0.3.2
+    #image: ghcr.io/gamedirection/open-trivia-backend:v0.3.18
     build: ./backend
     ports:
       - "3001:5000"

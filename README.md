@@ -12,6 +12,7 @@ Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
 
 ## Key Features
+- **Share Play** — real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
 - Discord users can submit question suggestions directly from the bot for admin approval.

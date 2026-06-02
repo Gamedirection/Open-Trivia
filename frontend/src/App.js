@@ -5,6 +5,7 @@ import Admin from './Admin';
 import Leaderboard from './Leaderboard';
 import ResetPasswordPage from './ResetPasswordPage';
 import Dashboard from './Dashboard';
+import SharePlay from './SharePlay';
 import { PrivacyPolicyPage, TermsOfUsePage } from './LegalPage';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import { gravatarUrl } from './utils/gravatar';
@@ -473,6 +474,7 @@ function App() {
 
                             <nav className="app-nav" style={{ marginBottom: '30px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', display: 'flex', gap: '30px', flexWrap: 'wrap' }}>
                                 <Link to="/" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Play Game</Link>
+                                <Link to="/share-play" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Share Play</Link>
                                 {user && (
                                     <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>My Stats</Link>
                                 )}
@@ -484,6 +486,7 @@ function App() {
 
                             <Routes>
                                 <Route path="/" element={<Game />} />
+                                <Route path="/share-play" element={<SharePlay />} />
                                 <Route path="/dashboard" element={user ? <Dashboard /> : <Navigate to="/" replace />} />
                                 <Route path="/leaderboard" element={<Leaderboard />} />
                                 <Route path="/admin" element={user?.role === 'admin' ? <Admin /> : <Navigate to="/" replace />} />

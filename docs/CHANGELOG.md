@@ -1,5 +1,31 @@
 # Changelog / Roadmap
 
+## v0.3.18
+- Added **Suggest a Question** and **⚠ Report** buttons to the Share Play game view, matching the feature set of solo play.
+- Both actions persist across question changes — opening either panel while a round transitions keeps the modal or dropdown open on the next question.
+- Report captures the question ID at the moment the dropdown is opened, so a mid-report question change still targets the correct question.
+- Report dropdown supports General / Inappropriate / Incorrect types with an optional free-text description, matching the solo game report flow.
+- Confirmed reports and feedback messages are shown inline in the action bar.
+
+## v0.3.17
+- Added **Share Play** — real-time multiplayer trivia powered by Socket.io with a persistent Live Room and player-created private/public rooms.
+- Live Room runs continuously with auto-cycling questions and is accessible to all players without a code.
+- Private rooms use a randomized 4-digit code; the first player is host, and admin transfers automatically to the highest-scoring player if the host leaves. Empty rooms auto-delete after 5 minutes.
+- Public rooms are listed in the Share Play lobby sorted by player count, with a join button and live refresh.
+- Full host and admin settings panels: timer (5–120 s), base correct/incorrect points, time bonus multiplier, speed-medal bonuses (🥇🥈🥉) for the first three voters, category filter, and public/private toggle.
+- Admin-only Live Room settings panel (visible to admin-role users only) with the same full control surface.
+- Scoring: correct = base pts + time-bonus × seconds-remaining + speed-medal bonus; incorrect = flat pts. Session score resets after 30 minutes of inactivity.
+- Logged-in players' Share Play points are added to their leaderboard score and recorded in game history.
+- Toggle: **Live Votes** — show per-option vote breakdown bars (off by default) or hide them.
+- Toggle: **Voter Count** — show/hide the X/Y voted counter.
+- Toggle: **Show players' answers** — reveal which option each player chose.
+- Toggle: **Player stats** — show answered/correct counts in the scoreboard.
+- Toggle: **A–F accuracy rating** — per-player accuracy badge derived from session history.
+- Toggle: **Allow guess changes** — players can revise their answer before time runs out.
+- Early round end: if all players vote and guess-change is off, the round ends immediately; if guess-change is on, a 5-second warning countdown fires and the round ends early unless someone changes their answer.
+- Top-10 session scoreboard visible throughout the round; logged-in players see their personal score highlighted.
+- Default settings match the configured admin preset: timer 15 s, correct 5 pts, incorrect 1 pt, time bonus ×0.25, gold/silver/bronze +5/+3/+1, voter count on, live vote breakdown off.
+
 ## v0.3.16
 - Synced the bundled Discord bot with paginated schedule listings so large recurring-job lists fit within Discord's message limits.
 - Updated the Discord bot interaction code to use current Discord.js flags-based ephemeral replies and `ClientReady` startup handling.

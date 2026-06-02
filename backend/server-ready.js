@@ -1,5 +1,6 @@
 const { Pool } = require('pg');
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -10,6 +11,7 @@ const AdmZip = require('adm-zip');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const initSharePlay = require('./shareplay');
 require('dotenv').config();
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
@@ -1310,6 +1312,16 @@ async function initDatabase() {
                 last_action_at TIMESTAMP,
                 blocked_until TIMESTAMP,
                 UNIQUE (action, key)
+            )`,
+            `CREATE TABLE IF NOT EXISTS shareplay_rounds (
+                id SERIAL PRIMARY KEY,
+                room_code VARCHAR(10) NOT NULL,
+                question_id INT REFERENCES questions(id) ON DELETE SET NULL,
+                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ends_at TIMESTAMP,
+                ended_at TIMESTAMP,
+                correct_answer CHAR(1),
+                timer_seconds INT DEFAULT 15
             )`,
         ];
         for (const m of migrations) {
@@ -4367,12 +4379,15 @@ app.get('/openapi.json', (_req, res) => {
 const PORT = process.env.PORT || 5000;
 initDatabase().then(() => {
     setInterval(runScheduledResets, 60 * 1000);
-    app.listen(PORT, '0.0.0.0', () => {
+    const httpServer = http.createServer(app);
+    initSharePlay(httpServer, pool, process.env.JWT_SECRET);
+    httpServer.listen(PORT, '0.0.0.0', () => {
         console.log(`
 ╔════════════════════════════════════════════╗
 ║   ✅ Backend running on port ${PORT}       ║
 ║   📡 Listening on 0.0.0.0:${PORT}          ║
 ║   🔐 JWT: ENABLED                          ║
+║   🎮 Share Play: ENABLED                   ║
 ╚════════════════════════════════════════════╝`);
     });
 }).catch(err => { console.error('❌ Init failed:', err); process.exit(1); });
