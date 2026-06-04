@@ -94,6 +94,15 @@ function SettingsPanel({ settings, categories, onChange, onApply, title }) {
     const [local, setLocal] = useState(settings);
     useEffect(() => setLocal(settings), [settings]);
     const set = (key, val) => setLocal(prev => ({ ...prev, [key]: val }));
+    const includeIds = local.includeCategoryIds || local.categoryIds || [];
+    const excludeIds = local.excludeCategoryIds || [];
+    const moveCategory = (id, mode) => {
+        const nextInclude = includeIds.filter(v => v !== id);
+        const nextExclude = excludeIds.filter(v => v !== id);
+        if (mode === 'include') nextInclude.push(id);
+        if (mode === 'exclude') nextExclude.push(id);
+        setLocal(prev => ({ ...prev, categoryIds: nextInclude, includeCategoryIds: nextInclude, excludeCategoryIds: nextExclude }));
+    };
 
     return (
         <div style={{ ...card, fontSize: '0.85rem' }}>
@@ -125,15 +134,17 @@ function SettingsPanel({ settings, categories, onChange, onApply, title }) {
 
                 {categories.length > 0 && (
                     <div style={{ borderTop: '1px solid var(--border-color,#ddd)', paddingTop: '10px' }}>
-                        <span style={label}>Categories (all if none selected)</span>
+                        <span style={label}>Categories (all included unless filtered)</span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '110px', overflowY: 'auto' }}>
                             {categories.filter(c => !c.disabled).map(cat => {
-                                const sel = (local.categoryIds || []).includes(cat.id);
+                                const included = includeIds.includes(cat.id);
+                                const excluded = excludeIds.includes(cat.id);
                                 return (
-                                    <label key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer', background: sel ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: sel ? '#fff' : 'inherit' }}>
-                                        <input type="checkbox" style={{ display: 'none' }} checked={sel} onChange={e => { const ids = local.categoryIds || []; set('categoryIds', e.target.checked ? [...ids, cat.id] : ids.filter(id => id !== cat.id)); }} />
+                                    <span key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
                                         {cat.name}
-                                    </label>
+                                        <button type="button" onClick={() => moveCategory(cat.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
+                                        <button type="button" onClick={() => moveCategory(cat.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
+                                    </span>
                                 );
                             })}
                         </div>
@@ -162,6 +173,7 @@ export default function SharePlay() {
     const [createPublic, setCreatePublic] = useState(false);
     const [createTimer, setCreateTimer]  = useState(15);
     const [createCats, setCreateCats]    = useState([]);
+    const [createExcludeCats, setCreateExcludeCats] = useState([]);
     const [createAllow, setCreateAllow]  = useState(true);
 
     // In-room state
@@ -169,7 +181,7 @@ export default function SharePlay() {
     const [isHost, setIsHost]       = useState(false);
     const [isLive, setIsLive]       = useState(false);
     const [phase, setPhase]         = useState('lobby');
-    const [settings, setSettings]   = useState({ timerSeconds: 15, allowChangeGuess: true, showOtherGuesses: false, showLiveVotes: false, showVoteCount: true, showPlayerStats: true, showQualityRating: false, pointsCorrect: 5, pointsIncorrect: 1, timeBonus: 0.25, goldBonus: 5, silverBonus: 3, bronzeBonus: 1, categoryIds: [], isPublic: false });
+    const [settings, setSettings]   = useState({ timerSeconds: 15, allowChangeGuess: true, showOtherGuesses: false, showLiveVotes: false, showVoteCount: true, showPlayerStats: true, showQualityRating: false, pointsCorrect: 5, pointsIncorrect: 1, timeBonus: 0.25, goldBonus: 5, silverBonus: 3, bronzeBonus: 1, categoryIds: [], includeCategoryIds: [], excludeCategoryIds: [], isPublic: false });
     const [earlyEndSecs, setEarlyEndSecs] = useState(null);
     const [tvMode, setTvMode] = useState(false);
 
@@ -353,10 +365,12 @@ export default function SharePlay() {
         socketRef.current?.emit('create_room', {
             timerSeconds: createTimer,
             categoryIds: createCats,
+            includeCategoryIds: createCats,
+            excludeCategoryIds: createExcludeCats,
             allowChangeGuess: createAllow,
             isPublic: createPublic,
         });
-    }, [createTimer, createCats, createAllow, createPublic]);
+    }, [createTimer, createCats, createExcludeCats, createAllow, createPublic]);
 
     const leaveRoom = useCallback(() => {
         socketRef.current?.emit('leave_room');
@@ -475,15 +489,23 @@ export default function SharePlay() {
                                 {toggle('Make room public (visible to all)', createPublic, setCreatePublic)}
                                 {categories.length > 0 && (
                                     <div>
-                                        <span style={label}>Categories (all if none selected)</span>
+                                        <span style={label}>Categories (all included unless filtered)</span>
                                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
                                             {categories.filter(c => !c.disabled).map(cat => {
-                                                const sel = createCats.includes(cat.id);
+                                                const included = createCats.includes(cat.id);
+                                                const excluded = createExcludeCats.includes(cat.id);
+                                                const moveCreateCat = (mode) => {
+                                                    setCreateCats(p => p.filter(id => id !== cat.id));
+                                                    setCreateExcludeCats(p => p.filter(id => id !== cat.id));
+                                                    if (mode === 'include') setCreateCats(p => [...p, cat.id]);
+                                                    if (mode === 'exclude') setCreateExcludeCats(p => [...p, cat.id]);
+                                                };
                                                 return (
-                                                    <label key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 8px', borderRadius: '6px', cursor: 'pointer', background: sel ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: sel ? '#fff' : 'inherit' }}>
-                                                        <input type="checkbox" style={{ display: 'none' }} checked={sel} onChange={e => setCreateCats(p => e.target.checked ? [...p, cat.id] : p.filter(id => id !== cat.id))} />
+                                                    <span key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
                                                         {cat.name}
-                                                    </label>
+                                                        <button type="button" onClick={() => moveCreateCat(included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
+                                                        <button type="button" onClick={() => moveCreateCat(excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
+                                                    </span>
                                                 );
                                             })}
                                         </div>

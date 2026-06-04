@@ -476,7 +476,7 @@ function App() {
                                 <Link to="/" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Play Game</Link>
                                 <Link to="/share-play" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Share Play</Link>
                                 {user && (
-                                    <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>My Stats</Link>
+                                    <Link to="/dashboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Profile</Link>
                                 )}
                                 <Link to="/leaderboard" style={{ textDecoration: 'none', color: 'var(--text-color)', fontWeight: 'bold' }}>Leaderboard</Link>
                                 {user && user.role === 'admin' && (

@@ -1,5 +1,15 @@
 # Changelog / Roadmap
 
+## v0.3.19
+- Added include/exclude category filtering in solo Play with visible category pills.
+- Added saved custom category presets that users can name, reapply, and remove from their Profile.
+- Renamed the user-facing Stats navigation/page language to Profile while keeping activity summaries available.
+- Added include/exclude category filtering to Share Play room creation and host/admin room settings.
+- Added inline category renaming in the admin Categories section.
+- Updated admin category pack import so CSV files can be uploaded directly without a zip when no images are needed.
+- Added URL import support for CSV URLs and shared Google Sheets CSV exports, alongside existing GitHub/zip imports.
+- Added the `custom_category_groups` database table and runtime migration for existing deployments.
+
 ## v0.3.18
 - Added **Suggest a Question** and **⚠ Report** buttons to the Share Play game view, matching the feature set of solo play.
 - Both actions persist across question changes - opening either panel while a round transitions keeps the modal or dropdown open on the next question.

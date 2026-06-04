@@ -18,6 +18,7 @@ export default function Dashboard() {
     const [showEmail, setShowEmail] = useState(true);
     const [animationsEnabled, setAnimationsEnabled] = useState(true);
     const [profileNotice, setProfileNotice] = useState('');
+    const [categoryGroups, setCategoryGroups] = useState([]);
     const [discordLinkBusy, setDiscordLinkBusy] = useState(false);
     const [emailUpgrade, setEmailUpgrade] = useState({ email: '', password: '' });
     const [emailUpgradeSaving, setEmailUpgradeSaving] = useState(false);
@@ -81,6 +82,18 @@ export default function Dashboard() {
             setProfile(null);
         } finally {
             setProfileLoading(false);
+        }
+    };
+
+    const fetchCategoryGroups = async () => {
+        if (!token) return;
+        try {
+            const res = await axios.get(`${API_URL}/me/category-groups`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setCategoryGroups(Array.isArray(res.data) ? res.data : []);
+        } catch {
+            setCategoryGroups([]);
         }
     };
 
@@ -184,7 +197,7 @@ export default function Dashboard() {
     const resetScore = async (categoryId) => {
         if (!token) return;
         const label = categoryId ? 'this category' : 'all categories';
-        if (!window.confirm(`Reset your stats for ${label}?`)) return;
+        if (!window.confirm(`Reset your activity for ${label}?`)) return;
         setResetting(true);
         try {
             await axios.post(
@@ -201,28 +214,42 @@ export default function Dashboard() {
         }
     };
 
+    const deleteCategoryGroup = async (id) => {
+        if (!token) return;
+        if (!window.confirm('Remove this custom category group?')) return;
+        try {
+            await axios.delete(`${API_URL}/me/category-groups/${id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setCategoryGroups(prev => prev.filter(group => group.id !== id));
+        } catch (err) {
+            alert(err.response?.data?.error || 'Could not remove custom group.');
+        }
+    };
+
     useEffect(() => {
         fetchStats();
     }, [timeframe]);
 
     useEffect(() => {
         fetchProfile();
+        fetchCategoryGroups();
     }, []);
 
     if (!token) {
         return (
             <div className="card" style={{ textAlign: 'center' }}>
-                Log in to view your stats.
+                Log in to view your profile.
             </div>
         );
     }
 
     if (loading) {
-        return <div className="card" style={{ textAlign: 'center' }}>Loading stats…</div>;
+        return <div className="card" style={{ textAlign: 'center' }}>Loading profile…</div>;
     }
 
     if (!stats) {
-        return <div className="card" style={{ textAlign: 'center' }}>No stats available.</div>;
+        return <div className="card" style={{ textAlign: 'center' }}>No profile data available.</div>;
     }
 
     const totals = stats.totals || {};
@@ -370,15 +397,42 @@ export default function Dashboard() {
                 )}
             </div>
             <div className="card" style={{ marginBottom: '20px' }}>
+                <h3 style={{ marginTop: 0 }}>Custom Category Groups</h3>
+                {categoryGroups.length ? (
+                    <div style={{ display: 'grid', gap: '10px' }}>
+                        {categoryGroups.map(group => (
+                            <div key={group.id} style={{ padding: '10px', border: '1px solid var(--border-color)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', gap: '10px', flexWrap: 'wrap' }}>
+                                <div>
+                                    <div style={{ fontWeight: 'bold' }}>{group.name}</div>
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginTop: '6px' }}>
+                                        {(group.categories || []).map(cat => (
+                                            <span key={cat.id} style={{ fontSize: '12px', padding: '3px 8px', borderRadius: '999px', backgroundColor: 'var(--border-color)' }}>{cat.name}</span>
+                                        ))}
+                                        {group.exclude_category_ids?.length ? (
+                                            <span style={{ fontSize: '12px', color: '#888' }}>{group.exclude_category_ids.length} excluded</span>
+                                        ) : null}
+                                    </div>
+                                </div>
+                                <button className="btn" onClick={() => deleteCategoryGroup(group.id)} style={{ padding: '5px 10px', backgroundColor: '#dc3545', color: 'white', alignSelf: 'center' }}>
+                                    Remove
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p style={{ color: '#888', marginBottom: 0 }}>No custom category groups saved yet.</p>
+                )}
+            </div>
+            <div className="card" style={{ marginBottom: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
-                    <h2 style={{ margin: 0 }}>📊 My Stats</h2>
+                    <h2 style={{ margin: 0 }}>📊 Activity</h2>
                     <button
                         className="btn"
                         onClick={() => resetScore(null)}
                         disabled={resetting}
                         style={{ backgroundColor: '#6c757d', color: 'white', padding: '6px 12px' }}
                     >
-                        {resetting ? 'Resetting...' : 'Reset All Stats'}
+                        {resetting ? 'Resetting...' : 'Reset All Activity'}
                     </button>
                     {refreshing && (
                         <span style={{ fontSize: '12px', color: '#888' }}>Refreshing…</span>
@@ -464,7 +518,7 @@ export default function Dashboard() {
                         </table>
                     </div>
                 ) : (
-                    <p style={{ color: '#888' }}>No category stats yet.</p>
+                    <p style={{ color: '#888' }}>No category activity yet.</p>
                 )}
             </div>
 

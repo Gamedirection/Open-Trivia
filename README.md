@@ -9,10 +9,10 @@ Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 ## Try it out at [Trivia.GameDirection.net](https://trivia.gamedirection.net)
 
 ## Overview
-Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user analytics.
+Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user profiles.
 
 ## Key Features
-- **Share Play** - real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
+- **Share Play** - real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), include/exclude category filters, session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
 - Discord users can submit question suggestions directly from the bot for admin approval.
@@ -23,12 +23,13 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Leaderboard privacy options: hidden emails for guests, display names, optional censoring, optional anonymous entries, Discord avatars with Gravatar fallback.
 - Timer-based scoring with configurable min/max points.
 - Adaptive question difficulty based on answer accuracy.
-- User dashboard with stats and per-category breakdown.
+- Profile page with activity totals, per-category breakdown, and saved custom category groups.
 - Profile & privacy: display name edits, email visibility toggle, optional avatar display, Discord avatar preference when linked.
 - Question images by URL or admin uploads (png/jpg/jpeg/svg/webp).
 - User suggestions can include image URLs.
 - Questions can use either 2 answers or 4 answers.
-- Category packs: export selected categories as zip (CSV + images), download a pack template, and import from zip, GitHub, or a GitHub release asset URL.
+- Category filters: include/exclude category pills in Play, saved custom presets, and admin category renaming.
+- Category packs: export selected categories as zip (CSV + images), download a pack template, and import from direct CSV uploads, zip files, GitHub, CSV URLs, or shared Google Sheets URLs.
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
 - Helm chart for Kubernetes deployments.
@@ -85,7 +86,7 @@ docker compose up -d
 Frontend image/version note:
 - The footer version is driven by `FRONTEND_IMAGE_TAG`.
 - If you deploy `ghcr.io/gamedirection/open-trivia-frontend:latest`, set `FRONTEND_IMAGE_TAG=latest`.
-- If you pin a release tag such as `v0.3.14`, set `FRONTEND_IMAGE_TAG=v0.3.14`.
+- If you pin a release tag such as `v0.3.19`, set `FRONTEND_IMAGE_TAG=v0.3.19`.
 
 ### Env (Backend)
 ```bash

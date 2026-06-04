@@ -368,6 +368,28 @@ function compactQuestionOptions(options) {
         .filter((option) => option.char && option.text);
 }
 
+function parseIdList(value) {
+    const raw = Array.isArray(value) ? value : String(value || '').split(',');
+    return [...new Set(raw
+        .map((v) => parseInt(v, 10))
+        .filter((n) => Number.isFinite(n) && n > 0))];
+}
+
+function categoryFilterSql(includeIds, excludeIds, startIndex = 1) {
+    const clauses = [];
+    const params = [];
+    let idx = startIndex;
+    if (includeIds.length) {
+        clauses.push(`q.category_id = ANY($${idx++}::int[])`);
+        params.push(includeIds);
+    }
+    if (excludeIds.length) {
+        clauses.push(`NOT (q.category_id = ANY($${idx++}::int[]))`);
+        params.push(excludeIds);
+    }
+    return { clause: clauses.length ? `AND ${clauses.join(' AND ')}` : '', params };
+}
+
 function normalizeSubmittedQuestionOptions(options, correctAnswer) {
     const normalized = {
         a: String(options?.a || '').trim(),
@@ -1161,6 +1183,15 @@ async function initDatabase() {
                 reset_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 reset_by_admin_id INT REFERENCES users(id),
                 reason TEXT
+            )`,
+            `CREATE TABLE IF NOT EXISTS custom_category_groups (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(100) NOT NULL,
+                include_category_ids INT[] DEFAULT '{}',
+                exclude_category_ids INT[] DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
             `CREATE TABLE IF NOT EXISTS leaderboard_schedules (
                 id SERIAL PRIMARY KEY,
@@ -1956,10 +1987,23 @@ app.delete('/categories/:id', async (req, res) => {
 
 app.patch('/categories/:id', async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    const { disabled } = req.body || {};
-    if (typeof disabled !== 'boolean') return res.status(400).json({ error: 'disabled must be boolean' });
+    const { disabled, name } = req.body || {};
+    const updates = [];
+    const params = [];
+    if (typeof disabled === 'boolean') {
+        params.push(disabled);
+        updates.push(`disabled=$${params.length}`);
+    }
+    if (name !== undefined) {
+        const trimmed = String(name || '').trim();
+        if (!trimmed) return res.status(400).json({ error: 'Name required' });
+        params.push(trimmed.slice(0, 100));
+        updates.push(`name=$${params.length}`);
+    }
+    if (!updates.length) return res.status(400).json({ error: 'No category updates provided' });
     try {
-        const r = await runQuery('UPDATE categories SET disabled=$1 WHERE id=$2 RETURNING *', [disabled, req.params.id]);
+        params.push(req.params.id);
+        const r = await runQuery(`UPDATE categories SET ${updates.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
         if (!r.rows.length) return res.status(404).json({ error: 'Category not found' });
         res.json(r.rows[0]);
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -2204,23 +2248,26 @@ app.post('/game/opentdb/submit', async (req, res) => {
 app.get('/game/next', async (req, res) => {
     const catParsed = req.query.categoryId ? parseInt(req.query.categoryId, 10) : NaN;
     const catId = Number.isNaN(catParsed) ? null : catParsed;
+    const includeIds = catId ? [catId] : parseIdList(req.query.includeCategoryIds || req.query.includeCategories);
+    const excludeIds = parseIdList(req.query.excludeCategoryIds || req.query.excludeCategories);
+    const filter = categoryFilterSql(includeIds, excludeIds, 1);
     try {
         const count = await pool.query(
             `SELECT COUNT(*)
              FROM questions q
              JOIN categories c ON c.id = q.category_id
-             WHERE q.disabled=FALSE AND c.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)`,
-            [catId]
+             WHERE q.disabled=FALSE AND c.disabled=FALSE ${filter.clause}`,
+            filter.params
         );
         if (parseInt(count.rows[0].count) === 0) return res.json({ message: 'No questions available' });
         const qr = await pool.query(
             `SELECT q.*
              FROM questions q
              JOIN categories c ON c.id = q.category_id
-             WHERE q.disabled=FALSE AND c.disabled=FALSE AND ($1::int IS NULL OR q.category_id=$1)
+             WHERE q.disabled=FALSE AND c.disabled=FALSE ${filter.clause}
              ORDER BY RANDOM()
              LIMIT 1`,
-            [catId]
+            filter.params
         );
         const q = qr.rows[0];
         const cat = await pool.query('SELECT name FROM categories WHERE id=$1', [q.category_id]);
@@ -3176,6 +3223,74 @@ app.get('/me/stats', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── USER: CUSTOM CATEGORY GROUPS ─────────────────────────────────────────────
+function normalizeCustomGroupRow(row) {
+    return {
+        id: row.id,
+        name: row.name,
+        include_category_ids: row.include_category_ids || [],
+        exclude_category_ids: row.exclude_category_ids || [],
+        categories: row.categories || [],
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    };
+}
+
+app.get('/me/category-groups', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    try {
+        const r = await pool.query(`
+            SELECT g.*,
+                   COALESCE(
+                       json_agg(json_build_object('id', c.id, 'name', c.name) ORDER BY c.name)
+                       FILTER (WHERE c.id IS NOT NULL),
+                       '[]'
+                   ) AS categories
+            FROM custom_category_groups g
+            LEFT JOIN categories c
+              ON c.id = ANY(g.include_category_ids)
+             AND c.disabled = FALSE
+            WHERE g.user_id=$1
+            GROUP BY g.id
+            ORDER BY g.updated_at DESC, g.name ASC
+        `, [u.id]);
+        res.json(r.rows.map(normalizeCustomGroupRow));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/me/category-groups', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    const name = String(req.body?.name || '').trim().slice(0, 100);
+    const includeIds = parseIdList(req.body?.includeCategoryIds || req.body?.include_category_ids);
+    const excludeIds = parseIdList(req.body?.excludeCategoryIds || req.body?.exclude_category_ids);
+    if (!name) return res.status(400).json({ error: 'Name required' });
+    if (!includeIds.length && !excludeIds.length) return res.status(400).json({ error: 'Select at least one category' });
+    try {
+        const r = await runQuery(
+            `INSERT INTO custom_category_groups (user_id, name, include_category_ids, exclude_category_ids)
+             VALUES ($1, $2, $3, $4)
+             RETURNING *`,
+            [u.id, name, includeIds, excludeIds]
+        );
+        res.json(normalizeCustomGroupRow(r.rows[0]));
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/me/category-groups/:id', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    try {
+        const r = await runQuery(
+            'DELETE FROM custom_category_groups WHERE id=$1 AND user_id=$2 RETURNING id',
+            [req.params.id, u.id]
+        );
+        if (!r.rows.length) return res.status(404).json({ error: 'Group not found' });
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── USER: PROFILE / PRIVACY ───────────────────────────────────────────────────
 app.get('/me/profile', async (req, res) => {
     const u = await requireAuth(req, res);
@@ -3846,15 +3961,87 @@ async function importCategoryZipBuffer(buf) {
     return inserted;
 }
 
+async function importCategoryCsvBuffer(buf, fallbackCategoryName = 'Category') {
+    const { rows } = parseCsvLines(Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || ''));
+    if (!rows.length) return 0;
+
+    const imgSettings = await getImageSettings();
+    const maxKb = Number(imgSettings.max_image_kb) || 0;
+    const existingRows = await pool.query('SELECT name FROM categories');
+    const existing = new Set(existingRows.rows.map(r => r.name.toLowerCase()));
+    const catMap = new Map();
+    let inserted = 0;
+
+    for (const row of rows) {
+        const baseName = row.category_name || fallbackCategoryName || 'Category';
+        let catId = catMap.get(baseName.toLowerCase());
+        if (!catId) {
+            const catName = await uniqueCategoryName(baseName, existing);
+            let cat = (await pool.query('SELECT id FROM categories WHERE LOWER(name)=LOWER($1)', [catName])).rows[0];
+            if (!cat) cat = (await runQuery('INSERT INTO categories (name) VALUES ($1) RETURNING *', [catName])).rows[0];
+            catId = cat.id;
+            catMap.set(baseName.toLowerCase(), catId);
+        }
+
+        let imageUrl = normalizeImageUrl(row.image_url);
+        if (imageUrl) {
+            const chk = await validateImageUrl(imageUrl, maxKb);
+            if (!chk.ok) imageUrl = null;
+        }
+
+        await runQuery(
+            `INSERT INTO questions (category_id,text,option_a,option_b,option_c,option_d,correct_answer,complexity,image_url,disabled)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            [
+                catId,
+                row.question_text,
+                row.option_a,
+                row.option_b,
+                row.option_c,
+                row.option_d,
+                String(row.correct_answer || 'A').trim().toUpperCase().slice(0,1),
+                (row.complexity || 'medium').trim().toLowerCase(),
+                imageUrl || null,
+                String(row.disabled || '').toLowerCase() === 'true'
+            ]
+        );
+        inserted++;
+    }
+    return inserted;
+}
+
+function normalizeCategoryImportUrl(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return '';
+    try {
+        const url = new URL(raw);
+        if (/docs\.google\.com$/i.test(url.hostname) && url.pathname.includes('/spreadsheets/')) {
+            const match = url.pathname.match(/\/spreadsheets\/d\/([^/]+)/);
+            if (match) {
+                const gid = url.searchParams.get('gid') || (url.hash.match(/gid=(\d+)/)?.[1]) || '0';
+                return `https://docs.google.com/spreadsheets/d/${match[1]}/export?format=csv&gid=${gid}`;
+            }
+        }
+    } catch {}
+    return raw;
+}
+
+function looksLikeCsvImport(url, contentType = '') {
+    return /\.csv($|\?)/i.test(url) || /text\/csv|application\/csv|spreadsheet/i.test(contentType);
+}
+
 app.post('/admin/categories/import-zip', async (req, res) => {
     const admin = requireAdmin(req, res);
     if (!admin) return;
     const upload = multer({ storage: multer.memoryStorage() }).single('file');
     upload(req, res, async (err) => {
         if (err) return res.status(400).json({ error: 'Upload failed' });
-        if (!req.file) return res.status(400).json({ error: 'No zip provided' });
+        if (!req.file) return res.status(400).json({ error: 'No file provided' });
         try {
-            const inserted = await importCategoryZipBuffer(req.file.buffer);
+            const original = String(req.file.originalname || '').toLowerCase();
+            const inserted = original.endsWith('.csv')
+                ? await importCategoryCsvBuffer(req.file.buffer, path.basename(original, '.csv'))
+                : await importCategoryZipBuffer(req.file.buffer);
             res.json({ success: true, inserted });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -3866,18 +4053,22 @@ app.post('/admin/categories/import-github', async (req, res) => {
     const { repoUrl } = req.body || {};
     if (!repoUrl) return res.status(400).json({ error: 'repoUrl required' });
     try {
-        let zipUrl = repoUrl;
-        const isZipUrl = /\.zip($|\?)/i.test(repoUrl) || /releases\/download\//i.test(repoUrl);
-        if (!isZipUrl && /github\.com\/[^/]+\/[^/]+/i.test(repoUrl)) {
-            const parts = repoUrl.replace(/\/$/, '').split('/');
+        let importUrl = normalizeCategoryImportUrl(repoUrl);
+        const isCsvUrl = /\.csv($|\?)/i.test(importUrl);
+        const isZipUrl = /\.zip($|\?)/i.test(importUrl) || /releases\/download\//i.test(importUrl);
+        if (!isCsvUrl && !isZipUrl && /github\.com\/[^/]+\/[^/]+/i.test(importUrl)) {
+            const parts = importUrl.replace(/\/$/, '').split('/');
             const owner = parts[parts.length - 2];
             const repo = parts[parts.length - 1].replace(/\.git$/, '');
-            zipUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/main.zip`;
+            importUrl = `https://github.com/${owner}/${repo}/archive/refs/heads/main.zip`;
         }
-        const r = await fetch(zipUrl);
-        if (!r.ok) return res.status(400).json({ error: `Failed to fetch zip (${r.status})` });
+        const r = await fetch(importUrl);
+        if (!r.ok) return res.status(400).json({ error: `Failed to fetch import (${r.status})` });
+        const contentType = r.headers.get('content-type') || '';
         const buf = Buffer.from(await r.arrayBuffer());
-        const inserted = await importCategoryZipBuffer(buf);
+        const inserted = looksLikeCsvImport(importUrl, contentType)
+            ? await importCategoryCsvBuffer(buf, 'Imported')
+            : await importCategoryZipBuffer(buf);
         res.json({ success: true, inserted });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

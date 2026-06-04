@@ -270,6 +270,8 @@ export default function Admin() {
     const [qRefreshing, setQRefreshing] = useState(false);
     const [editingQ, setEditingQ]     = useState(null);
     const [newCatName, setNewCatName] = useState('');
+    const [editingCategoryId, setEditingCategoryId] = useState(null);
+    const [editingCategoryName, setEditingCategoryName] = useState('');
     const [pending, setPending]       = useState([]);
     const [reported, setReported]     = useState([]);
     // Users tab
@@ -541,6 +543,37 @@ export default function Admin() {
         }
     };
 
+    const startRenameCategory = (cat) => {
+        setEditingCategoryId(cat.id);
+        setEditingCategoryName(cat.name);
+    };
+
+    const cancelRenameCategory = () => {
+        setEditingCategoryId(null);
+        setEditingCategoryName('');
+    };
+
+    const saveCategoryName = async (cat) => {
+        const nextName = editingCategoryName.trim();
+        if (!nextName) return flash('❌ Category name required');
+        if (nextName === cat.name) {
+            cancelRenameCategory();
+            return;
+        }
+        try {
+            const res = await axios.patch(`${API_URL}/categories/${cat.id}`, { name: nextName }, authCfg());
+            flash('✅ Category renamed');
+            setEditingCategoryId(null);
+            setEditingCategoryName('');
+            loadCategories();
+            if (selCat?.id === cat.id) {
+                setSelCat(res.data);
+            }
+        } catch (e) {
+            flash('❌ ' + (e.response?.data?.error || 'Rename failed'));
+        }
+    };
+
     // ── Question actions ───────────────────────────────────────────────────────
     const addQuestion = async (data) => {
         try {
@@ -807,7 +840,7 @@ export default function Admin() {
         finally { setExportingCats(false); }
     };
 
-    const importCategoryZip = async (file) => {
+    const importCategoryPack = async (file) => {
         setImportingCats(true);
         try {
             const form = new FormData();
@@ -818,9 +851,9 @@ export default function Admin() {
                     'Content-Type': 'multipart/form-data'
                 }
             });
-            flash('✅ Category packs imported');
+            flash('✅ Category import completed');
             loadCategories();
-        } catch (e) { flash('❌ Category import failed'); }
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Category import failed')); }
         finally { setImportingCats(false); }
     };
 
@@ -829,10 +862,10 @@ export default function Admin() {
         setImportingCats(true);
         try {
             await axios.post(`${API_URL}/admin/categories/import-github`, { repoUrl: githubRepoUrl.trim() }, authCfg());
-            flash('✅ Imported from GitHub');
+            flash('✅ Imported from URL');
             setGithubRepoUrl('');
             loadCategories();
-        } catch (e) { flash('❌ GitHub import failed'); }
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'URL import failed')); }
         finally { setImportingCats(false); }
     };
 
@@ -1107,24 +1140,58 @@ export default function Admin() {
                     <h3 style={{ marginBottom: '12px' }}>Existing ({categories.length})</h3>
                     {categories.length === 0 && <p style={{ color: '#888' }}>No categories yet.</p>}
                     {categories.map(c => (
-                        <div key={c.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div>
-                                <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{c.name}</span>
-                                {c.disabled && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6c757d', fontWeight: 'bold' }}>Disabled</span>}
+                        <div key={c.id} style={{ ...cardStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                            <div style={{ flex: 1, minWidth: '220px' }}>
+                                {editingCategoryId === c.id ? (
+                                    <input
+                                        value={editingCategoryName}
+                                        onChange={e => setEditingCategoryName(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter') saveCategoryName(c);
+                                            if (e.key === 'Escape') cancelRenameCategory();
+                                        }}
+                                        autoFocus
+                                        style={{ width: '100%', maxWidth: '360px', padding: '7px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}
+                                    />
+                                ) : (
+                                    <>
+                                        <span style={{ fontWeight: 'bold', color: 'var(--text-color)' }}>{c.name}</span>
+                                        {c.disabled && <span style={{ marginLeft: '8px', fontSize: '12px', color: '#6c757d', fontWeight: 'bold' }}>Disabled</span>}
+                                    </>
+                                )}
                             </div>
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                                <button className="btn" style={{ fontSize: '12px', padding: '5px 12px' }}
-                                    onClick={() => { setSelCat(c); loadQuestions(c.id); setTab('questions'); }}>
-                                    📚 Browse
-                                </button>
-                                <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: c.disabled ? '#28a745' : '#ffc107', color: c.disabled ? 'white' : '#333' }}
-                                    onClick={() => toggleCategoryDisabled(c)}>
-                                    {c.disabled ? '✅ Enable' : '🚫 Disable'}
-                                </button>
-                                <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#dc3545', color: 'white' }}
-                                    onClick={() => deleteCategory(c)}>
-                                    🗑️ Delete
-                                </button>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                {editingCategoryId === c.id ? (
+                                    <>
+                                        <button className="btn btn-primary" style={{ fontSize: '12px', padding: '5px 12px' }}
+                                            onClick={() => saveCategoryName(c)}>
+                                            Save
+                                        </button>
+                                        <button className="btn" style={{ fontSize: '12px', padding: '5px 12px' }}
+                                            onClick={cancelRenameCategory}>
+                                            Cancel
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button className="btn" style={{ fontSize: '12px', padding: '5px 12px' }}
+                                            onClick={() => { setSelCat(c); loadQuestions(c.id); setTab('questions'); }}>
+                                            📚 Browse
+                                        </button>
+                                        <button className="btn" style={{ fontSize: '12px', padding: '5px 12px' }}
+                                            onClick={() => startRenameCategory(c)}>
+                                            Rename
+                                        </button>
+                                        <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: c.disabled ? '#28a745' : '#ffc107', color: c.disabled ? 'white' : '#333' }}
+                                            onClick={() => toggleCategoryDisabled(c)}>
+                                            {c.disabled ? '✅ Enable' : '🚫 Disable'}
+                                        </button>
+                                        <button className="btn" style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#dc3545', color: 'white' }}
+                                            onClick={() => deleteCategory(c)}>
+                                            🗑️ Delete
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
                     ))}
@@ -1725,7 +1792,7 @@ export default function Admin() {
                         <div style={{ fontSize: '12px', color: '#888', marginBottom: '10px' }}>
                             You can share packs via GitHub. Browse collections at <a href="https://questions.trivia.gamedirection.net" target="_blank" rel="noreferrer">questions.trivia.gamedirection.net</a>.
                             Template repo: <a href="https://github.com/Gamedirection/Open-Trivia-Questions.git" target="_blank" rel="noreferrer">Open-Trivia-Questions</a>.
-                            Be cautious: zip files from others may contain malicious content.
+                            Upload a CSV directly when there are no images, or use a zip when bundling images or multiple CSV files.
                         </div>
                         <div style={{ display: 'grid', gap: '10px' }}>
                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1780,11 +1847,11 @@ export default function Admin() {
                             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
                                 <input
                                     type="file"
-                                    accept=".zip,application/zip"
+                                    accept=".zip,.csv,application/zip,text/csv"
                                     onChange={e => {
                                         const file = e.target.files?.[0];
                                         if (!file) return;
-                                        importCategoryZip(file);
+                                        importCategoryPack(file);
                                         e.target.value = '';
                                     }}
                                 />
@@ -1795,11 +1862,11 @@ export default function Admin() {
                                 <input
                                     value={githubRepoUrl}
                                     onChange={e => setGithubRepoUrl(e.target.value)}
-                                    placeholder="GitHub repo URL, release asset, or zip URL"
+                                    placeholder="GitHub repo, zip URL, CSV URL, or Google Sheets share URL"
                                     style={{ flex: 1, minWidth: '220px', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
                                 />
                                 <button className="btn" onClick={importFromGithub} disabled={importingCats || !githubRepoUrl.trim()}>
-                                    Import from GitHub/URL
+                                    Import from URL
                                 </button>
                             </div>
                         </div>

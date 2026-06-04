@@ -98,6 +98,16 @@ async function initDB() {
                 reason TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS custom_category_groups (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                name VARCHAR(100) NOT NULL,
+                include_category_ids INT[] DEFAULT '{}',
+                exclude_category_ids INT[] DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS leaderboard_schedules (
                 id SERIAL PRIMARY KEY,
                 period VARCHAR(20) UNIQUE NOT NULL,

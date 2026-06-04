@@ -33,6 +33,7 @@ function makeRoom(code, isLive = false) {
         silverBonus: 3,             // 2nd to vote bonus pts
         bronzeBonus: 1,             // 3rd to vote bonus pts
         categoryIds: [],
+        excludeCategoryIds: [],
         // ── Round state ────────────────────────────────────────────────────────
         players: new Map(),         // socketId → playerObj
         phase: 'waiting',           // 'waiting' | 'question' | 'results'
@@ -134,6 +135,12 @@ function generateCode() {
 
 // ── Question helpers ──────────────────────────────────────────────────────────
 
+function normalizeIds(value) {
+    return [...new Set((Array.isArray(value) ? value : [])
+        .map(Number)
+        .filter(n => Number.isFinite(n) && n > 0))];
+}
+
 function shuffleOptions(row) {
     const opts = [
         { key: 'A', text: row.option_a },
@@ -161,6 +168,10 @@ async function fetchQuestion(room, pool) {
         clauses.push(`q.category_id IN (${room.categoryIds.map((_, i) => `$${params.length + i + 1}`).join(',')})`);
         params.push(...room.categoryIds);
     }
+    if (room.excludeCategoryIds.length) {
+        clauses.push(`q.category_id NOT IN (${room.excludeCategoryIds.map((_, i) => `$${params.length + i + 1}`).join(',')})`);
+        params.push(...room.excludeCategoryIds);
+    }
 
     const where = clauses.length ? `AND ${clauses.join(' AND ')}` : '';
     const sql = `
@@ -173,10 +184,18 @@ async function fetchQuestion(room, pool) {
     let result = await pool.query(sql, params);
     if (!result.rows.length) {
         room.usedQuestionIds.clear();
-        const baseParams = room.categoryIds.length ? room.categoryIds : [];
-        const baseSql = sql.replace(where, room.categoryIds.length
-            ? `AND q.category_id IN (${room.categoryIds.map((_, i) => `$${i + 1}`).join(',')})`
-            : '');
+        const baseClauses = [];
+        const baseParams = [];
+        if (room.categoryIds.length) {
+            baseClauses.push(`q.category_id IN (${room.categoryIds.map((_, i) => `$${baseParams.length + i + 1}`).join(',')})`);
+            baseParams.push(...room.categoryIds);
+        }
+        if (room.excludeCategoryIds.length) {
+            baseClauses.push(`q.category_id NOT IN (${room.excludeCategoryIds.map((_, i) => `$${baseParams.length + i + 1}`).join(',')})`);
+            baseParams.push(...room.excludeCategoryIds);
+        }
+        const baseWhere = baseClauses.length ? `AND ${baseClauses.join(' AND ')}` : '';
+        const baseSql = sql.replace(where, baseWhere);
         result = await pool.query(baseSql, baseParams);
         if (!result.rows.length) return null;
     }
@@ -341,6 +360,8 @@ function roomSettings(room) {
         silverBonus: room.silverBonus,
         bronzeBonus: room.bronzeBonus,
         categoryIds: room.categoryIds,
+        includeCategoryIds: room.categoryIds,
+        excludeCategoryIds: room.excludeCategoryIds,
         isPublic: room.isPublic,
     };
 }
@@ -360,7 +381,9 @@ function applySettings(room, data) {
     if (data.goldBonus        !== undefined) room.goldBonus       = Math.max(0, Math.min(50,  Number(data.goldBonus)));
     if (data.silverBonus      !== undefined) room.silverBonus     = Math.max(0, Math.min(50,  Number(data.silverBonus)));
     if (data.bronzeBonus      !== undefined) room.bronzeBonus     = Math.max(0, Math.min(50,  Number(data.bronzeBonus)));
-    if (Array.isArray(data.categoryIds))     room.categoryIds     = data.categoryIds.map(Number);
+    if (Array.isArray(data.categoryIds))     room.categoryIds     = normalizeIds(data.categoryIds);
+    if (Array.isArray(data.includeCategoryIds)) room.categoryIds  = normalizeIds(data.includeCategoryIds);
+    if (Array.isArray(data.excludeCategoryIds)) room.excludeCategoryIds = normalizeIds(data.excludeCategoryIds);
     if (data.isPublic !== undefined)         room.isPublic        = !!data.isPublic;
 }
 

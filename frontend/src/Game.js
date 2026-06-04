@@ -38,7 +38,11 @@ export default function Game() {
     const reportMenuRef = useRef(null);
     const [categories, setCategories] = useState([]);
     const [categorySearch, setCategorySearch] = useState('');
-    const [selectedCategoryId, setSelectedCategoryId] = useState('');
+    const [includeCategoryIds, setIncludeCategoryIds] = useState([]);
+    const [excludeCategoryIds, setExcludeCategoryIds] = useState([]);
+    const [customGroups, setCustomGroups] = useState([]);
+    const [customGroupName, setCustomGroupName] = useState('');
+    const [customGroupStatus, setCustomGroupStatus] = useState('');
     const [openTdbQueue, setOpenTdbQueue] = useState([]);
     const [openTdbEnabled, setOpenTdbEnabled] = useState(true);
     const [skipPerHour, setSkipPerHour] = useState(3);
@@ -67,7 +71,11 @@ export default function Game() {
     };
 
     const token = localStorage.getItem('token');
-    const isOpenTdbCategory = selectedCategoryId === OPENTDB_CATEGORY_ID;
+    const isOpenTdbCategory = includeCategoryIds.length === 1 && includeCategoryIds[0] === OPENTDB_CATEGORY_ID;
+    const localIncludeIds = includeCategoryIds.filter(id => id !== OPENTDB_CATEGORY_ID);
+    const localExcludeIds = excludeCategoryIds.filter(id => id !== OPENTDB_CATEGORY_ID);
+    const includeFilterKey = includeCategoryIds.join(',');
+    const excludeFilterKey = excludeCategoryIds.join(',');
 
     const fetchOpenTdbBatch = async (amount) => {
         const n = Number.isFinite(amount) ? Math.max(1, Math.min(50, amount)) : OPENTDB_PREFETCH_AHEAD;
@@ -115,7 +123,8 @@ export default function Game() {
                 return;
             }
             const params = {};
-            if (selectedCategoryId) params.categoryId = selectedCategoryId;
+            if (localIncludeIds.length) params.includeCategoryIds = localIncludeIds.join(',');
+            if (localExcludeIds.length) params.excludeCategoryIds = localExcludeIds.join(',');
             const res = await axios.get(`${API_URL}/game/next`, { params });
             if (!res.data || !res.data.id) {
                 setQuestion(null);
@@ -151,8 +160,8 @@ export default function Game() {
     }, [showReportOptions]);
 
     useEffect(() => {
-        if (selectedCategoryId !== '') fetchQuestion();
-    }, [selectedCategoryId]);
+        fetchQuestion();
+    }, [includeFilterKey, excludeFilterKey]);
 
     useEffect(() => {
         const loadGameSettings = async () => {
@@ -186,10 +195,26 @@ export default function Game() {
     }, [openTdbEnabled]);
 
     useEffect(() => {
-        if (!openTdbEnabled && selectedCategoryId === OPENTDB_CATEGORY_ID) {
-            setSelectedCategoryId('');
+        const loadGroups = async () => {
+            if (!token) return;
+            try {
+                const res = await axios.get(`${API_URL}/me/category-groups`, {
+                    headers: { Authorization: `Bearer ${token}` }
+                });
+                setCustomGroups(Array.isArray(res.data) ? res.data : []);
+            } catch {
+                setCustomGroups([]);
+            }
+        };
+        loadGroups();
+    }, [token]);
+
+    useEffect(() => {
+        if (!openTdbEnabled && (includeCategoryIds.includes(OPENTDB_CATEGORY_ID) || excludeCategoryIds.includes(OPENTDB_CATEGORY_ID))) {
+            setIncludeCategoryIds(prev => prev.filter(id => id !== OPENTDB_CATEGORY_ID));
+            setExcludeCategoryIds(prev => prev.filter(id => id !== OPENTDB_CATEGORY_ID));
         }
-    }, [openTdbEnabled, selectedCategoryId]);
+    }, [openTdbEnabled, includeCategoryIds, excludeCategoryIds]);
 
     useEffect(() => {
         if (!question?.id) return;
@@ -346,6 +371,48 @@ export default function Game() {
         }
     };
 
+    const moveCategory = (id, mode) => {
+        setIncludeCategoryIds(prev => prev.filter(v => v !== id));
+        setExcludeCategoryIds(prev => prev.filter(v => v !== id));
+        if (mode === 'include') setIncludeCategoryIds(prev => [...prev, id]);
+        if (mode === 'exclude') setExcludeCategoryIds(prev => [...prev, id]);
+    };
+
+    const applyCustomGroup = (group) => {
+        setIncludeCategoryIds(Array.isArray(group.include_category_ids) ? group.include_category_ids : []);
+        setExcludeCategoryIds(Array.isArray(group.exclude_category_ids) ? group.exclude_category_ids : []);
+    };
+
+    const saveCustomGroup = async () => {
+        if (!token) {
+            setCustomGroupStatus('Log in to save custom groups.');
+            return;
+        }
+        const name = customGroupName.trim();
+        if (!name) {
+            setCustomGroupStatus('Name this group first.');
+            return;
+        }
+        if (!includeCategoryIds.length && !excludeCategoryIds.length) {
+            setCustomGroupStatus('Include or exclude at least one category.');
+            return;
+        }
+        try {
+            const res = await axios.post(`${API_URL}/me/category-groups`, {
+                name,
+                includeCategoryIds: localIncludeIds,
+                excludeCategoryIds: localExcludeIds,
+            }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setCustomGroups(prev => [res.data, ...prev]);
+            setCustomGroupName('');
+            setCustomGroupStatus('Saved.');
+        } catch (err) {
+            setCustomGroupStatus(err.response?.data?.error || 'Save failed.');
+        }
+    };
+
     const getButtonStyle = (optChar) => {
         const base = {
             border: '1px solid var(--border-color)',
@@ -406,15 +473,25 @@ export default function Game() {
     const filteredCategories = categories.filter(c =>
         c.name.toLowerCase().includes(categorySearch.trim().toLowerCase())
     );
+    const byId = new Map(categories.map(c => [c.id, c]));
+    const pillStyle = (kind) => ({
+        border: '1px solid var(--border-color)',
+        borderRadius: '999px',
+        padding: '5px 10px',
+        backgroundColor: kind === 'include' ? '#d4edda' : '#f8d7da',
+        color: kind === 'include' ? '#155724' : '#721c24',
+        fontSize: '12px',
+        display: 'inline-flex',
+        gap: '6px',
+        alignItems: 'center'
+    });
 
     return (
         <div className="card" style={{ position: 'relative' }}>
             {/* Category filter */}
-            <div style={{
-                display: 'flex', gap: '10px', flexWrap: 'wrap',
-                alignItems: 'center', marginBottom: '16px'
-            }}>
-                <div>
+            <div style={{ display: 'grid', gap: '10px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'end' }}>
+                    <div>
                     <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '4px' }}>
                         Search Categories
                     </label>
@@ -428,26 +505,55 @@ export default function Game() {
                             color: 'var(--text-color)', width: '200px'
                         }}
                     />
+                    </div>
+                    {(includeCategoryIds.length || excludeCategoryIds.length) ? (
+                        <button className="btn" onClick={() => { setIncludeCategoryIds([]); setExcludeCategoryIds([]); }} style={{ padding: '7px 12px' }}>
+                            Clear Filters
+                        </button>
+                    ) : null}
                 </div>
-                <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '4px' }}>
-                        Category
-                    </label>
-                    <select
-                        value={selectedCategoryId}
-                        onChange={e => setSelectedCategoryId(e.target.value)}
-                        style={{
-                            padding: '6px 8px', borderRadius: '6px',
-                            border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)',
-                            color: 'var(--text-color)', minWidth: '200px'
-                        }}
-                    >
-                        <option value="">All Categories</option>
-                        {filteredCategories.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '92px', overflowY: 'auto' }}>
+                    {filteredCategories.map(c => {
+                        const included = includeCategoryIds.includes(c.id);
+                        const excluded = excludeCategoryIds.includes(c.id);
+                        return (
+                            <span key={c.id} style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '3px 5px 3px 9px', fontSize: '12px' }}>
+                                {c.name}
+                                <button type="button" onClick={() => moveCategory(c.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', padding: '2px 7px', cursor: 'pointer', background: included ? '#28a745' : 'var(--border-color)', color: included ? 'white' : 'inherit' }}>
+                                    Include
+                                </button>
+                                <button type="button" onClick={() => moveCategory(c.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', padding: '2px 7px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color)', color: excluded ? 'white' : 'inherit' }}>
+                                    Exclude
+                                </button>
+                            </span>
+                        );
+                    })}
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {includeCategoryIds.map(id => byId.get(id)).filter(Boolean).map(c => (
+                        <span key={`in-${c.id}`} style={pillStyle('include')}>Include {c.name}<button type="button" onClick={() => moveCategory(c.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                    ))}
+                    {excludeCategoryIds.map(id => byId.get(id)).filter(Boolean).map(c => (
+                        <span key={`ex-${c.id}`} style={pillStyle('exclude')}>Exclude {c.name}<button type="button" onClick={() => moveCategory(c.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                    ))}
+                    {!includeCategoryIds.length && !excludeCategoryIds.length && <span style={{ fontSize: '12px', color: '#888' }}>Showing all categories.</span>}
+                </div>
+                {(customGroups.length > 0 || token) && (
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                        {customGroups.map(group => (
+                            <button key={group.id} className="btn" onClick={() => applyCustomGroup(group)} style={{ padding: '5px 10px', fontSize: '12px' }}>
+                                {group.name}
+                            </button>
                         ))}
-                    </select>
-                </div>
+                        {token && (
+                            <>
+                                <input value={customGroupName} onChange={e => setCustomGroupName(e.target.value)} placeholder="Preset name" style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                                <button className="btn btn-primary" onClick={saveCustomGroup} style={{ padding: '6px 12px' }}>Save Preset</button>
+                            </>
+                        )}
+                        {customGroupStatus && <span style={{ fontSize: '12px', color: customGroupStatus === 'Saved.' ? '#28a745' : '#888' }}>{customGroupStatus}</span>}
+                    </div>
+                )}
             </div>
 
             {/* Category + Difficulty header */}
