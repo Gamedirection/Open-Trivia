@@ -40,6 +40,7 @@ export default function Game() {
     const [categorySearch, setCategorySearch] = useState('');
     const [includeCategoryIds, setIncludeCategoryIds] = useState([]);
     const [excludeCategoryIds, setExcludeCategoryIds] = useState([]);
+    const [showCategoryFilters, setShowCategoryFilters] = useState(false);
     const [customGroups, setCustomGroups] = useState([]);
     const [customGroupName, setCustomGroupName] = useState('');
     const [customGroupStatus, setCustomGroupStatus] = useState('');
@@ -451,16 +452,24 @@ export default function Game() {
     }
 
     if (!question) {
+        const filtersActive = includeCategoryIds.length || excludeCategoryIds.length;
         return (
             <div className="card" style={{ textAlign: 'center', padding: '40px' }}>
                 <div style={{ fontSize: '48px', marginBottom: '20px' }}>🔍</div>
                 <h2>No Questions Available Yet!</h2>
                 <p style={{ color: '#666', marginBottom: '30px' }}>
-                    Ask an admin to add some trivia questions to get started.
+                    {filtersActive ? 'No questions match the current category filters.' : 'Ask an admin to add some trivia questions to get started.'}
                 </p>
-                <button onClick={fetchQuestion} className="btn btn-primary" style={{ padding: '12px 30px' }}>
-                    🔄 Retry
-                </button>
+                <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    {filtersActive && (
+                        <button onClick={() => { setIncludeCategoryIds([]); setExcludeCategoryIds([]); }} className="btn" style={{ padding: '12px 24px' }}>
+                            Clear Filters
+                        </button>
+                    )}
+                    <button onClick={fetchQuestion} className="btn btn-primary" style={{ padding: '12px 30px' }}>
+                        🔄 Retry
+                    </button>
+                </div>
             </div>
         );
     }
@@ -490,44 +499,15 @@ export default function Game() {
         <div className="card" style={{ position: 'relative' }}>
             {/* Category filter */}
             <div style={{ display: 'grid', gap: '10px', marginBottom: '16px' }}>
-                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'end' }}>
-                    <div>
-                    <label style={{ display: 'block', fontSize: '12px', color: '#888', marginBottom: '4px' }}>
-                        Search Categories
-                    </label>
-                    <input
-                        value={categorySearch}
-                        onChange={e => setCategorySearch(e.target.value)}
-                        placeholder="Type to filter..."
-                        style={{
-                            padding: '6px 8px', borderRadius: '6px',
-                            border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)',
-                            color: 'var(--text-color)', width: '200px'
-                        }}
-                    />
-                    </div>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button className="btn" onClick={() => setShowCategoryFilters(true)} style={{ padding: '7px 12px' }}>
+                        Category Filters
+                    </button>
                     {(includeCategoryIds.length || excludeCategoryIds.length) ? (
                         <button className="btn" onClick={() => { setIncludeCategoryIds([]); setExcludeCategoryIds([]); }} style={{ padding: '7px 12px' }}>
                             Clear Filters
                         </button>
                     ) : null}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '92px', overflowY: 'auto' }}>
-                    {filteredCategories.map(c => {
-                        const included = includeCategoryIds.includes(c.id);
-                        const excluded = excludeCategoryIds.includes(c.id);
-                        return (
-                            <span key={c.id} style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '3px 5px 3px 9px', fontSize: '12px' }}>
-                                {c.name}
-                                <button type="button" onClick={() => moveCategory(c.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', padding: '2px 7px', cursor: 'pointer', background: included ? '#28a745' : 'var(--border-color)', color: included ? 'white' : 'inherit' }}>
-                                    Include
-                                </button>
-                                <button type="button" onClick={() => moveCategory(c.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', padding: '2px 7px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color)', color: excluded ? 'white' : 'inherit' }}>
-                                    Exclude
-                                </button>
-                            </span>
-                        );
-                    })}
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                     {includeCategoryIds.map(id => byId.get(id)).filter(Boolean).map(c => (
@@ -538,23 +518,68 @@ export default function Game() {
                     ))}
                     {!includeCategoryIds.length && !excludeCategoryIds.length && <span style={{ fontSize: '12px', color: '#888' }}>Showing all categories.</span>}
                 </div>
-                {(customGroups.length > 0 || token) && (
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
-                        {customGroups.map(group => (
-                            <button key={group.id} className="btn" onClick={() => applyCustomGroup(group)} style={{ padding: '5px 10px', fontSize: '12px' }}>
-                                {group.name}
-                            </button>
-                        ))}
-                        {token && (
-                            <>
-                                <input value={customGroupName} onChange={e => setCustomGroupName(e.target.value)} placeholder="Preset name" style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
-                                <button className="btn btn-primary" onClick={saveCustomGroup} style={{ padding: '6px 12px' }}>Save Preset</button>
-                            </>
-                        )}
-                        {customGroupStatus && <span style={{ fontSize: '12px', color: customGroupStatus === 'Saved.' ? '#28a745' : '#888' }}>{customGroupStatus}</span>}
-                    </div>
-                )}
             </div>
+
+            {showCategoryFilters && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="card" style={{ width: 'min(760px, 100%)', maxHeight: '86vh', overflowY: 'auto', padding: '18px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style={{ margin: 0 }}>Category Filters</h3>
+                            <button className="btn" onClick={() => setShowCategoryFilters(false)} style={{ padding: '5px 10px' }}>Close</button>
+                        </div>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            <input
+                                value={categorySearch}
+                                onChange={e => setCategorySearch(e.target.value)}
+                                placeholder="Search categories..."
+                                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '240px', overflowY: 'auto' }}>
+                                {filteredCategories.map(c => {
+                                    const included = includeCategoryIds.includes(c.id);
+                                    const excluded = excludeCategoryIds.includes(c.id);
+                                    return (
+                                        <span key={c.id} style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '4px 5px 4px 10px', fontSize: '12px' }}>
+                                            {c.name}
+                                            <button type="button" onClick={() => moveCategory(c.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', padding: '3px 8px', cursor: 'pointer', background: included ? '#28a745' : 'var(--border-color)', color: included ? 'white' : 'inherit' }}>
+                                                Include
+                                            </button>
+                                            <button type="button" onClick={() => moveCategory(c.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', padding: '3px 8px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color)', color: excluded ? 'white' : 'inherit' }}>
+                                                Exclude
+                                            </button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {includeCategoryIds.map(id => byId.get(id)).filter(Boolean).map(c => (
+                                    <span key={`modal-in-${c.id}`} style={pillStyle('include')}>Include {c.name}<button type="button" onClick={() => moveCategory(c.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                                ))}
+                                {excludeCategoryIds.map(id => byId.get(id)).filter(Boolean).map(c => (
+                                    <span key={`modal-ex-${c.id}`} style={pillStyle('exclude')}>Exclude {c.name}<button type="button" onClick={() => moveCategory(c.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                                ))}
+                                {!includeCategoryIds.length && !excludeCategoryIds.length && <span style={{ fontSize: '12px', color: '#888' }}>Showing all categories.</span>}
+                            </div>
+                            {(customGroups.length > 0 || token) && (
+                                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                                    {customGroups.map(group => (
+                                        <button key={group.id} className="btn" onClick={() => applyCustomGroup(group)} style={{ padding: '5px 10px', fontSize: '12px' }}>
+                                            {group.name}
+                                        </button>
+                                    ))}
+                                    {token && (
+                                        <>
+                                            <input value={customGroupName} onChange={e => setCustomGroupName(e.target.value)} placeholder="Preset name" style={{ padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color)' }} />
+                                            <button className="btn btn-primary" onClick={saveCustomGroup} style={{ padding: '6px 12px' }}>Save Preset</button>
+                                        </>
+                                    )}
+                                    {customGroupStatus && <span style={{ fontSize: '12px', color: customGroupStatus === 'Saved.' ? '#28a745' : '#888' }}>{customGroupStatus}</span>}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Category + Difficulty header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', gap: '10px', flexWrap: 'wrap' }}>

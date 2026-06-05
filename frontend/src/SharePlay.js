@@ -92,10 +92,16 @@ const COMPLEXITY_COLOR = { easy: '#28a745', medium: '#fd7e14', hard: '#dc3545' }
 
 function SettingsPanel({ settings, categories, onChange, onApply, title }) {
     const [local, setLocal] = useState(settings);
+    const [showCategoryModal, setShowCategoryModal] = useState(false);
+    const [categorySearch, setCategorySearch] = useState('');
     useEffect(() => setLocal(settings), [settings]);
     const set = (key, val) => setLocal(prev => ({ ...prev, [key]: val }));
     const includeIds = local.includeCategoryIds || local.categoryIds || [];
     const excludeIds = local.excludeCategoryIds || [];
+    const byId = new Map(categories.map(c => [c.id, c]));
+    const filteredCategories = categories
+        .filter(c => !c.disabled)
+        .filter(c => c.name.toLowerCase().includes(categorySearch.trim().toLowerCase()));
     const moveCategory = (id, mode) => {
         const nextInclude = includeIds.filter(v => v !== id);
         const nextExclude = excludeIds.filter(v => v !== id);
@@ -106,6 +112,46 @@ function SettingsPanel({ settings, categories, onChange, onApply, title }) {
 
     return (
         <div style={{ ...card, fontSize: '0.85rem' }}>
+            {showCategoryModal && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div style={{ ...card, width: 'min(720px, 100%)', maxHeight: '86vh', overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style={{ margin: 0 }}>Categories</h3>
+                            <button style={btn('var(--border-color,#eee)', { color: 'inherit', padding: '5px 10px' })} onClick={() => setShowCategoryModal(false)}>Close</button>
+                        </div>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            <input
+                                value={categorySearch}
+                                onChange={e => setCategorySearch(e.target.value)}
+                                placeholder="Search categories..."
+                                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '260px', overflowY: 'auto' }}>
+                                {filteredCategories.map(cat => {
+                                    const included = includeIds.includes(cat.id);
+                                    const excluded = excludeIds.includes(cat.id);
+                                    return (
+                                        <span key={cat.id} style={{ fontSize: '0.78rem', padding: '4px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                                            {cat.name}
+                                            <button type="button" onClick={() => moveCategory(cat.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
+                                            <button type="button" onClick={() => moveCategory(cat.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                                {includeIds.map(id => byId.get(id)).filter(Boolean).map(cat => (
+                                    <span key={`settings-in-${cat.id}`} style={{ fontSize: '0.75rem', borderRadius: '999px', padding: '3px 8px', background: '#d4edda', color: '#155724' }}>Include {cat.name}</span>
+                                ))}
+                                {excludeIds.map(id => byId.get(id)).filter(Boolean).map(cat => (
+                                    <span key={`settings-ex-${cat.id}`} style={{ fontSize: '0.75rem', borderRadius: '999px', padding: '3px 8px', background: '#f8d7da', color: '#721c24' }}>Exclude {cat.name}</span>
+                                ))}
+                                {!includeIds.length && !excludeIds.length && <span style={{ color: '#888', fontSize: '0.8rem' }}>All categories included.</span>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             <h4 style={{ margin: '0 0 14px', fontSize: '0.95rem' }}>{title || 'Settings'}</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 {rangeRow('Timer', local.timerSeconds, 5, 120, 5, v => set('timerSeconds', v))}
@@ -134,19 +180,14 @@ function SettingsPanel({ settings, categories, onChange, onApply, title }) {
 
                 {categories.length > 0 && (
                     <div style={{ borderTop: '1px solid var(--border-color,#ddd)', paddingTop: '10px' }}>
-                        <span style={label}>Categories (all included unless filtered)</span>
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '110px', overflowY: 'auto' }}>
-                            {categories.filter(c => !c.disabled).map(cat => {
-                                const included = includeIds.includes(cat.id);
-                                const excluded = excludeIds.includes(cat.id);
-                                return (
-                                    <span key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                                        {cat.name}
-                                        <button type="button" onClick={() => moveCategory(cat.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
-                                        <button type="button" onClick={() => moveCategory(cat.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
-                                    </span>
-                                );
-                            })}
+                        <span style={label}>Categories</span>
+                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <button type="button" style={btn('var(--border-color,#eee)', { color: 'inherit', padding: '6px 10px' })} onClick={() => setShowCategoryModal(true)}>
+                                Edit Categories
+                            </button>
+                            <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                                {includeIds.length || excludeIds.length ? `${includeIds.length} included, ${excludeIds.length} excluded` : 'All categories'}
+                            </span>
                         </div>
                     </div>
                 )}
@@ -174,6 +215,8 @@ export default function SharePlay() {
     const [createTimer, setCreateTimer]  = useState(15);
     const [createCats, setCreateCats]    = useState([]);
     const [createExcludeCats, setCreateExcludeCats] = useState([]);
+    const [showCreateCategories, setShowCreateCategories] = useState(false);
+    const [createCategorySearch, setCreateCategorySearch] = useState('');
     const [createAllow, setCreateAllow]  = useState(true);
 
     // In-room state
@@ -432,9 +475,56 @@ export default function SharePlay() {
     if (!roomCode) {
         const liveRoom = publicRooms.find(r => r.isLive);
         const customRooms = publicRooms.filter(r => !r.isLive);
+        const filteredCreateCategories = categories
+            .filter(c => !c.disabled)
+            .filter(c => c.name.toLowerCase().includes(createCategorySearch.trim().toLowerCase()));
+        const moveCreateCategory = (cat, mode) => {
+            setCreateCats(p => p.filter(id => id !== cat.id));
+            setCreateExcludeCats(p => p.filter(id => id !== cat.id));
+            if (mode === 'include') setCreateCats(p => [...p, cat.id]);
+            if (mode === 'exclude') setCreateExcludeCats(p => [...p, cat.id]);
+        };
 
         return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                {showCreateCategories && (
+                    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                        <div style={{ ...card, width: 'min(720px, 100%)', maxHeight: '86vh', overflowY: 'auto' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                                <h3 style={{ margin: 0 }}>Categories</h3>
+                                <button style={btn('var(--border-color,#eee)', { color: 'inherit', padding: '5px 10px' })} onClick={() => setShowCreateCategories(false)}>Close</button>
+                            </div>
+                            <div style={{ display: 'grid', gap: '12px' }}>
+                                <input
+                                    value={createCategorySearch}
+                                    onChange={e => setCreateCategorySearch(e.target.value)}
+                                    placeholder="Search categories..."
+                                    style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)' }}
+                                />
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '260px', overflowY: 'auto' }}>
+                                    {filteredCreateCategories.map(cat => {
+                                        const included = createCats.includes(cat.id);
+                                        const excluded = createExcludeCats.includes(cat.id);
+                                        return (
+                                            <span key={cat.id} style={{ fontSize: '0.78rem', padding: '4px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                                                {cat.name}
+                                                <button type="button" onClick={() => moveCreateCategory(cat, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
+                                                <button type="button" onClick={() => moveCreateCategory(cat, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
+                                    {createCats.length || createExcludeCats.length ? (
+                                        <span style={{ color: '#888', fontSize: '0.8rem' }}>{createCats.length} included, {createExcludeCats.length} excluded</span>
+                                    ) : (
+                                        <span style={{ color: '#888', fontSize: '0.8rem' }}>All categories included.</span>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
                 <div style={{ ...card, textAlign: 'center' }}>
                     <h2 style={{ margin: '0 0 6px' }}>Share Play</h2>
                     <p style={{ margin: 0, color: '#888', fontSize: '0.9rem' }}>Real-time multiplayer trivia - join the live room or start your own.</p>
@@ -489,25 +579,14 @@ export default function SharePlay() {
                                 {toggle('Make room public (visible to all)', createPublic, setCreatePublic)}
                                 {categories.length > 0 && (
                                     <div>
-                                        <span style={label}>Categories (all included unless filtered)</span>
-                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px' }}>
-                                            {categories.filter(c => !c.disabled).map(cat => {
-                                                const included = createCats.includes(cat.id);
-                                                const excluded = createExcludeCats.includes(cat.id);
-                                                const moveCreateCat = (mode) => {
-                                                    setCreateCats(p => p.filter(id => id !== cat.id));
-                                                    setCreateExcludeCats(p => p.filter(id => id !== cat.id));
-                                                    if (mode === 'include') setCreateCats(p => [...p, cat.id]);
-                                                    if (mode === 'exclude') setCreateExcludeCats(p => [...p, cat.id]);
-                                                };
-                                                return (
-                                                    <span key={cat.id} style={{ fontSize: '0.78rem', padding: '3px 6px', borderRadius: '999px', border: '1px solid var(--border-color,#ddd)', display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                                                        {cat.name}
-                                                        <button type="button" onClick={() => moveCreateCat(included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: included ? 'var(--btn-primary,#007bff)' : 'var(--border-color,#eee)', color: included ? '#fff' : 'inherit' }}>Include</button>
-                                                        <button type="button" onClick={() => moveCreateCat(excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color,#eee)', color: excluded ? '#fff' : 'inherit' }}>Exclude</button>
-                                                    </span>
-                                                );
-                                            })}
+                                        <span style={label}>Categories</span>
+                                        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                            <button type="button" style={btn('var(--border-color,#eee)', { color: 'inherit', padding: '6px 10px' })} onClick={() => setShowCreateCategories(true)}>
+                                                Edit Categories
+                                            </button>
+                                            <span style={{ fontSize: '0.78rem', color: '#888' }}>
+                                                {createCats.length || createExcludeCats.length ? `${createCats.length} included, ${createExcludeCats.length} excluded` : 'All categories'}
+                                            </span>
                                         </div>
                                     </div>
                                 )}

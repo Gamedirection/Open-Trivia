@@ -18,7 +18,14 @@ export default function Dashboard() {
     const [showEmail, setShowEmail] = useState(true);
     const [animationsEnabled, setAnimationsEnabled] = useState(true);
     const [profileNotice, setProfileNotice] = useState('');
+    const [categories, setCategories] = useState([]);
     const [categoryGroups, setCategoryGroups] = useState([]);
+    const [showPresetModal, setShowPresetModal] = useState(false);
+    const [presetName, setPresetName] = useState('');
+    const [presetSearch, setPresetSearch] = useState('');
+    const [presetIncludeIds, setPresetIncludeIds] = useState([]);
+    const [presetExcludeIds, setPresetExcludeIds] = useState([]);
+    const [presetNotice, setPresetNotice] = useState('');
     const [discordLinkBusy, setDiscordLinkBusy] = useState(false);
     const [emailUpgrade, setEmailUpgrade] = useState({ email: '', password: '' });
     const [emailUpgradeSaving, setEmailUpgradeSaving] = useState(false);
@@ -94,6 +101,15 @@ export default function Dashboard() {
             setCategoryGroups(Array.isArray(res.data) ? res.data : []);
         } catch {
             setCategoryGroups([]);
+        }
+    };
+
+    const fetchCategories = async () => {
+        try {
+            const res = await cachedGet(axios, `${API_URL}/categories`, {}, 30000);
+            setCategories(Array.isArray(res.data) ? res.data : []);
+        } catch {
+            setCategories([]);
         }
     };
 
@@ -227,6 +243,48 @@ export default function Dashboard() {
         }
     };
 
+    const movePresetCategory = (id, mode) => {
+        setPresetIncludeIds(prev => prev.filter(v => v !== id));
+        setPresetExcludeIds(prev => prev.filter(v => v !== id));
+        if (mode === 'include') setPresetIncludeIds(prev => [...prev, id]);
+        if (mode === 'exclude') setPresetExcludeIds(prev => [...prev, id]);
+    };
+
+    const resetPresetModal = () => {
+        setPresetName('');
+        setPresetSearch('');
+        setPresetIncludeIds([]);
+        setPresetExcludeIds([]);
+        setPresetNotice('');
+    };
+
+    const savePresetFromProfile = async () => {
+        if (!token) return;
+        const name = presetName.trim();
+        if (!name) {
+            setPresetNotice('Name this preset first.');
+            return;
+        }
+        if (!presetIncludeIds.length && !presetExcludeIds.length) {
+            setPresetNotice('Include or exclude at least one category.');
+            return;
+        }
+        try {
+            const res = await axios.post(`${API_URL}/me/category-groups`, {
+                name,
+                includeCategoryIds: presetIncludeIds,
+                excludeCategoryIds: presetExcludeIds,
+            }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setCategoryGroups(prev => [res.data, ...prev]);
+            resetPresetModal();
+            setShowPresetModal(false);
+        } catch (err) {
+            setPresetNotice(err.response?.data?.error || 'Could not save preset.');
+        }
+    };
+
     useEffect(() => {
         fetchStats();
     }, [timeframe]);
@@ -234,6 +292,7 @@ export default function Dashboard() {
     useEffect(() => {
         fetchProfile();
         fetchCategoryGroups();
+        fetchCategories();
     }, []);
 
     if (!token) {
@@ -256,9 +315,80 @@ export default function Dashboard() {
     const totalAnswered = totals.total_answered || 0;
     const correct = totals.correct_answered || 0;
     const accuracy = totalAnswered > 0 ? Math.round((correct / totalAnswered) * 100) : 0;
+    const categoryById = new Map(categories.map(c => [c.id, c]));
+    const filteredPresetCategories = categories.filter(c =>
+        c.name.toLowerCase().includes(presetSearch.trim().toLowerCase())
+    );
+    const presetPillStyle = (kind) => ({
+        fontSize: '12px',
+        padding: '4px 9px',
+        borderRadius: '999px',
+        backgroundColor: kind === 'include' ? '#d4edda' : '#f8d7da',
+        color: kind === 'include' ? '#155724' : '#721c24',
+        display: 'inline-flex',
+        gap: '6px',
+        alignItems: 'center'
+    });
 
     return (
         <div>
+            {showPresetModal && (
+                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                    <div className="card" style={{ width: 'min(760px, 100%)', maxHeight: '86vh', overflowY: 'auto', padding: '18px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', marginBottom: '12px' }}>
+                            <h3 style={{ margin: 0 }}>Create Category Preset</h3>
+                            <button className="btn" onClick={() => { resetPresetModal(); setShowPresetModal(false); }} style={{ padding: '5px 10px' }}>Close</button>
+                        </div>
+                        <div style={{ display: 'grid', gap: '12px' }}>
+                            <input
+                                value={presetName}
+                                onChange={e => setPresetName(e.target.value)}
+                                placeholder="Preset name"
+                                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                            />
+                            <input
+                                value={presetSearch}
+                                onChange={e => setPresetSearch(e.target.value)}
+                                placeholder="Search categories..."
+                                style={{ padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)' }}
+                            />
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', maxHeight: '240px', overflowY: 'auto' }}>
+                                {filteredPresetCategories.map(cat => {
+                                    const included = presetIncludeIds.includes(cat.id);
+                                    const excluded = presetExcludeIds.includes(cat.id);
+                                    return (
+                                        <span key={cat.id} style={{ display: 'inline-flex', gap: '4px', alignItems: 'center', border: '1px solid var(--border-color)', borderRadius: '999px', padding: '4px 5px 4px 10px', fontSize: '12px' }}>
+                                            {cat.name}
+                                            <button type="button" onClick={() => movePresetCategory(cat.id, included ? 'clear' : 'include')} style={{ border: 'none', borderRadius: '999px', padding: '3px 8px', cursor: 'pointer', background: included ? '#28a745' : 'var(--border-color)', color: included ? 'white' : 'inherit' }}>
+                                                Include
+                                            </button>
+                                            <button type="button" onClick={() => movePresetCategory(cat.id, excluded ? 'clear' : 'exclude')} style={{ border: 'none', borderRadius: '999px', padding: '3px 8px', cursor: 'pointer', background: excluded ? '#dc3545' : 'var(--border-color)', color: excluded ? 'white' : 'inherit' }}>
+                                                Exclude
+                                            </button>
+                                        </span>
+                                    );
+                                })}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                                {presetIncludeIds.map(id => categoryById.get(id)).filter(Boolean).map(cat => (
+                                    <span key={`preset-in-${cat.id}`} style={presetPillStyle('include')}>Include {cat.name}<button type="button" onClick={() => movePresetCategory(cat.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                                ))}
+                                {presetExcludeIds.map(id => categoryById.get(id)).filter(Boolean).map(cat => (
+                                    <span key={`preset-ex-${cat.id}`} style={presetPillStyle('exclude')}>Exclude {cat.name}<button type="button" onClick={() => movePresetCategory(cat.id, 'clear')} style={{ border: 'none', background: 'transparent', cursor: 'pointer' }}>×</button></span>
+                                ))}
+                                {!presetIncludeIds.length && !presetExcludeIds.length && <span style={{ fontSize: '12px', color: '#888' }}>No categories selected.</span>}
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                                <button className="btn btn-primary" onClick={savePresetFromProfile}>Save Preset</button>
+                                {(presetIncludeIds.length || presetExcludeIds.length) ? (
+                                    <button className="btn" onClick={() => { setPresetIncludeIds([]); setPresetExcludeIds([]); }}>Clear</button>
+                                ) : null}
+                                {presetNotice && <span style={{ fontSize: '12px', color: '#888' }}>{presetNotice}</span>}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
             <div className="card" style={{ marginBottom: '20px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px', alignItems: 'center' }}>
                     <h2 style={{ margin: 0 }}>👤 Profile & Privacy</h2>
@@ -397,7 +527,12 @@ export default function Dashboard() {
                 )}
             </div>
             <div className="card" style={{ marginBottom: '20px' }}>
-                <h3 style={{ marginTop: 0 }}>Custom Category Groups</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '12px' }}>
+                    <h3 style={{ margin: 0 }}>Custom Category Groups</h3>
+                    <button className="btn btn-primary" onClick={() => setShowPresetModal(true)} style={{ padding: '7px 12px' }}>
+                        Create Preset
+                    </button>
+                </div>
                 {categoryGroups.length ? (
                     <div style={{ display: 'grid', gap: '10px' }}>
                         {categoryGroups.map(group => (
