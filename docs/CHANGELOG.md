@@ -2,6 +2,9 @@
 
 ## v0.3.21
 - Added admin Category Merge: select two categories to merge one into the other. Flagged as destructive with a confirmation checkbox and warning modal. A full backup snapshot is saved automatically before every merge. All questions, game sessions, score resets, custom category groups, and scheduled trivia references are updated.
+- Added Report Player button in SharePlay actions bar, alongside the existing question Report button. Lets players report others for Inappropriate Behavior, Cheating, or Harassment with optional description. Stored in new player_reports table.
+- Added Set Host in SharePlay room settings: host can transfer host status to another player via dropdown. Uses new transfer_host socket event.
+- Added mobile-responsive SharePlay lobby grids: Live Room and Join by Code stack vertically on mobile with Live Room on top.
 - Added SharePlay vote-to-kick system: click a player's name to initiate a vote. Other players see a yellow warning banner and can vote for or against. Majority or tie kicks the player.
 - Strike system: 1st kick = 30-minute SharePlay ban, 2nd kick = 24-hour ban, 3rd kick = permanent ban until admin appeal.
 - Banned users can submit an appeal from their Profile page (above Recent Activity). Admins review and approve/deny appeals.
