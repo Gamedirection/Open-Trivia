@@ -90,7 +90,7 @@ const COMPLEXITY_COLOR = { easy: '#28a745', medium: '#fd7e14', hard: '#dc3545' }
 
 // ── Settings panel (shared by admin/host) ────────────────────────────────────
 
-function SettingsPanel({ settings, categories, onChange, onApply, title }) {
+function SettingsPanel({ settings, categories, onChange, onApply, title, players, myUserId, onSetHost }) {
     const [local, setLocal] = useState(settings);
     const [showCategoryModal, setShowCategoryModal] = useState(false);
     const [categorySearch, setCategorySearch] = useState('');
@@ -194,6 +194,23 @@ function SettingsPanel({ settings, categories, onChange, onApply, title }) {
 
                 {onChange && <div style={{ borderTop: '1px solid var(--border-color,#ddd)', paddingTop: '10px' }}>{toggle('Public (show in room list)', local.isPublic, v => set('isPublic', v))}</div>}
 
+                {onSetHost && players && players.length > 1 && (
+                    <div style={{ borderTop: '1px solid var(--border-color,#ddd)', paddingTop: '10px' }}>
+                        <span style={label}>Transfer Host</span>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <select id="set-host-select" style={{ flex: 1, padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', fontSize: '0.85rem' }}>
+                                {players.filter(p => p.userId && p.userId !== myUserId).map(p => (
+                                    <option key={p.userId} value={p.socketId}>{p.displayName}{p.isHost ? ' (current host)' : ''}</option>
+                                ))}
+                            </select>
+                            <button style={btn('#6c757d', { padding: '6px 12px', fontSize: '0.8rem' })} onClick={() => {
+                                const sel = document.getElementById('set-host-select');
+                                if (sel?.value) onSetHost(sel.value);
+                            }}>Transfer</button>
+                        </div>
+                    </div>
+                )}
+
                 <button style={btn()} onClick={() => onApply(local)}>Apply Settings</button>
             </div>
         </div>
@@ -231,11 +248,11 @@ export default function SharePlay() {
     // Report / Suggest (persist across question changes intentionally)
     const [showRequestModal, setShowRequestModal] = useState(false);
     const [showReportMenu,   setShowReportMenu]   = useState(false);
+    const [reportPlayerId,   setReportPlayerId]   = useState('');
     const [reportType,       setReportType]       = useState('general');
     const [reportNote,       setReportNote]       = useState('');
     const [reportMessage,    setReportMessage]    = useState('');
     const reportMenuRef      = useRef(null);
-    const reportingQIdRef    = useRef(null); // capture question ID at open time
 
     // Question / voting
     const [currentQuestion, setCurrentQuestion] = useState(null);
@@ -488,28 +505,35 @@ export default function SharePlay() {
     const handleSuggest = useCallback(() => setShowRequestModal(true), []);
 
     const handleReport = useCallback(async (reasonOverride) => {
-        const qId = reportingQIdRef.current;
-        if (!qId) return;
+        if (!reportPlayerId) return;
         try {
             const token = getToken();
             const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
-            await axios.post(`${REST_BASE}/api/game/report`, { questionId: qId, reason: reasonOverride || 'General Report' }, { headers });
-            setReportMessage('✅ Reported successfully.');
+            const reportedPlayer = players.find(p => p.userId === Number(reportPlayerId));
+            await axios.post(`${REST_BASE}/api/game/report-player`, {
+                reportedUserId: Number(reportPlayerId),
+                roomCode,
+                reason: reasonOverride || 'General Report',
+                note: reportNote.trim() || undefined,
+            }, { headers });
+            setReportMessage(`✅ Reported ${reportedPlayer?.displayName || 'player'} successfully.`);
         } catch (err) {
-            setReportMessage(`⚠️ ${err.response?.data?.error || 'Question flagged for review.'}`);
+            setReportMessage(`⚠️ ${err.response?.data?.error || 'Failed to report player.'}`);
         }
-    }, []);
+    }, [reportPlayerId, players, roomCode, reportNote]);
 
     const submitReport = useCallback(async () => {
+        if (!reportPlayerId) { setReportMessage('⚠️ Select a player to report.'); return; }
         const trimmed = reportNote.trim();
-        const needsNote = reportType === 'inappropriate' || reportType === 'incorrect';
+        const needsNote = reportType === 'inappropriate' || reportType === 'cheating';
         if (needsNote && !trimmed) { setReportMessage('⚠️ Please add a short description.'); return; }
-        const label = reportType === 'inappropriate' ? 'Inappropriate' : reportType === 'incorrect' ? 'Incorrect' : 'General Report';
+        const label = reportType === 'inappropriate' ? 'Inappropriate' : reportType === 'cheating' ? 'Cheating' : reportType === 'harassment' ? 'Harassment' : 'General Report';
         await handleReport(needsNote ? `${label}: ${trimmed}` : label);
         setShowReportMenu(false);
         setReportNote('');
         setReportType('general');
-    }, [reportNote, reportType, handleReport]);
+        setReportPlayerId('');
+    }, [reportNote, reportType, reportPlayerId, handleReport]);
 
     const copyCode = useCallback(() => {
         navigator.clipboard?.writeText(roomCode).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
@@ -1118,6 +1142,9 @@ export default function SharePlay() {
                             onChange={true}
                             onApply={applyHostSettings}
                             title="⚙ Room Settings"
+                            players={players}
+                            myUserId={user?.id}
+                            onSetHost={(targetSocketId) => socketRef.current?.emit('transfer_host', { targetSocketId })}
                         />
                     )}
                 </div>
@@ -1136,24 +1163,32 @@ export default function SharePlay() {
                         <button
                             style={{ ...btn('#6c757d'), fontSize: '0.85rem', padding: '7px 14px' }}
                             onClick={() => {
-                                reportingQIdRef.current = currentQuestion.id;
                                 setShowReportMenu(v => !v);
                                 setReportMessage('');
+                                setReportPlayerId('');
                             }}
                         >
                             ⚠ Report
                         </button>
 
                         {showReportMenu && (
-                            <div style={{ position: 'absolute', bottom: '110%', left: 0, background: 'var(--card-bg,#fff)', border: '1px solid var(--border-color,#ddd)', borderRadius: '10px', padding: '14px', width: '260px', zIndex: 20, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }}>
-                                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '6px' }}>Report Type</div>
+                            <div style={{ position: 'absolute', bottom: '110%', left: 0, background: 'var(--card-bg,#fff)', border: '1px solid var(--border-color,#ddd)', borderRadius: '10px', padding: '14px', width: '280px', zIndex: 20, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }}>
+                                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '6px' }}>Report Player</div>
+                                <select value={reportPlayerId} onChange={e => setReportPlayerId(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
+                                    <option value="">Select a player...</option>
+                                    {players.filter(p => p.userId && p.userId !== user?.id).map(p => (
+                                        <option key={p.userId} value={p.userId}>{p.displayName}</option>
+                                    ))}
+                                </select>
                                 <select value={reportType} onChange={e => setReportType(e.target.value)}
                                     style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
                                     <option value="general">General Report</option>
-                                    <option value="inappropriate">Inappropriate</option>
-                                    <option value="incorrect">Incorrect Answer</option>
+                                    <option value="inappropriate">Inappropriate Behavior</option>
+                                    <option value="cheating">Cheating</option>
+                                    <option value="harassment">Harassment</option>
                                 </select>
-                                {(reportType === 'inappropriate' || reportType === 'incorrect') && (
+                                {(reportType === 'inappropriate' || reportType === 'cheating' || reportType === 'harassment') && (
                                     <textarea value={reportNote} onChange={e => setReportNote(e.target.value)}
                                         placeholder="Add a short description..."
                                         rows={3}

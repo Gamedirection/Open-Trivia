@@ -1392,6 +1392,15 @@ async function initDatabase() {
                 voters JSONB DEFAULT '[]',
                 kicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
+            `CREATE TABLE IF NOT EXISTS player_reports (
+                id SERIAL PRIMARY KEY,
+                reporter_user_id INT REFERENCES users(id),
+                reported_user_id INT REFERENCES users(id),
+                room_code VARCHAR(10),
+                reason VARCHAR(50) NOT NULL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )`,
         ];
         for (const m of migrations) {
             try { await client.query(m); } catch(e) { console.log('Migration skipped:', e.message); }
@@ -2462,6 +2471,24 @@ app.post('/game/report', async (req, res) => {
         if (!exists.rows.length) return res.status(404).json({ error: 'Question not found' });
         await runQuery('INSERT INTO question_reports (question_id,reason) VALUES ($1,$2)', [questionId, reason || 'Reported by user']);
         console.log(`🚩 Question ${questionId} reported by ${u ? `user ${u.id}` : 'guest'}`);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/game/report-player', async (req, res) => {
+    const u = getTokenUser(req);
+    const { reportedUserId, roomCode, reason, note } = req.body;
+    if (!reportedUserId || !reason) return res.status(400).json({ error: 'reportedUserId and reason required' });
+    if (u && u.id === reportedUserId) return res.status(400).json({ error: 'Cannot report yourself' });
+    try {
+        if (u) {
+            const blocked = await isUserBlocked(u.id);
+            if (blocked) return res.status(403).json({ error: 'Account is blocked' });
+        }
+        await runQuery('INSERT INTO player_reports (reporter_user_id, reported_user_id, room_code, reason, note) VALUES ($1,$2,$3,$4,$5)', [
+            u?.id || null, reportedUserId, roomCode || null, reason, note || null
+        ]);
+        console.log(`🚩 Player ${reportedUserId} reported by ${u ? `user ${u.id}` : 'guest'} - ${reason}`);
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });

@@ -817,6 +817,25 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             cancelKickVote(room, currentCode, io);
         });
 
+        socket.on('transfer_host', (data) => {
+            if (!currentCode) return;
+            const room = rooms.get(currentCode);
+            if (!room) return;
+            const profile = getProfile();
+            const amHost = room.hostSocketId === socket.id || (profile.userId && profile.userId === room.hostUserId);
+            if (!amHost) return;
+            const targetSocketId = data?.targetSocketId;
+            if (!targetSocketId || !room.players.has(targetSocketId)) return;
+            if (targetSocketId === socket.id) return;
+            room.hostSocketId = targetSocketId;
+            const target = room.players.get(targetSocketId);
+            if (target?.userId) room.hostUserId = target.userId;
+            for (const [, p] of room.players) p.isHost = false;
+            target.isHost = true;
+            io.to(currentCode).emit('players_update', { players: playerList(room) });
+            io.to(currentCode).emit('room_message', { message: `${profile.displayName} transferred host to ${target.displayName}` });
+        });
+
         socket.on('leave_room', () => dropFromRoom());
         socket.on('disconnect', () => dropFromRoom());
     });
