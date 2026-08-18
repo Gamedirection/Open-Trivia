@@ -176,6 +176,12 @@
 .sp-tv-center { order: 0; }
 .sp-tv-right  { order: 0; }
 
+.sp-lobby {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
 @media (max-width: 720px) {
   .sp-grid {
     grid-template-columns: 1fr;
@@ -193,4 +199,9 @@
   }
   .sp-tv-center { order: 1; }
   .sp-tv-right  { order: 2; }
+
+  .sp-lobby {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
 }

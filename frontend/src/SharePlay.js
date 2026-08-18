@@ -578,7 +578,7 @@ export default function SharePlay() {
 
                 {roomError && <div style={{ background: '#f8d7da', color: '#721c24', padding: '10px 16px', borderRadius: '8px' }}>{roomError}</div>}
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div className="sp-lobby">
                     {/* ── Live Room ── */}
                     <div style={{ ...card, borderColor: '#28a745', borderWidth: '2px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
@@ -608,7 +608,7 @@ export default function SharePlay() {
                 </div>
 
                 {/* ── Create room / public rooms list ── */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div className="sp-lobby">
                     {/* Create */}
                     <div style={card}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
