@@ -2047,6 +2047,46 @@ app.patch('/categories/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ── CATEGORY MERGE ─────────────────────────────────────────────────────────────
+app.post('/admin/categories/merge', async (req, res) => {
+    if (!requireAdmin(req, res)) return;
+    const { sourceCategoryId, targetCategoryId } = req.body || {};
+    if (!sourceCategoryId || !targetCategoryId)
+        return res.status(400).json({ error: 'sourceCategoryId and targetCategoryId required' });
+    if (Number(sourceCategoryId) === Number(targetCategoryId))
+        return res.status(400).json({ error: 'Source and target must be different categories' });
+    try {
+        const src = await pool.query('SELECT id, name FROM categories WHERE id=$1', [sourceCategoryId]);
+        const tgt = await pool.query('SELECT id, name FROM categories WHERE id=$1', [targetCategoryId]);
+        if (!src.rows.length) return res.status(404).json({ error: 'Source category not found' });
+        if (!tgt.rows.length) return res.status(404).json({ error: 'Target category not found' });
+        const srcName = src.rows[0].name;
+        const tgtName = tgt.rows[0].name;
+
+        const snapshot = await collectSnapshot();
+        await runQuery('INSERT INTO backup_snapshots (note, data) VALUES ($1, $2)', [
+            `Pre-merge backup: merging category "${srcName}" (id:${sourceCategoryId}) into "${tgtName}" (id:${targetCategoryId})`,
+            snapshot
+        ]);
+        await auditLog(getTokenUser(req)?.id || null, 'CATEGORY_MERGE_BACKUP',
+            `Backup created before merging category ${sourceCategoryId} into ${targetCategoryId}`);
+
+        const qResult = await pool.query('UPDATE questions SET category_id=$1 WHERE category_id=$2', [targetCategoryId, sourceCategoryId]);
+        await pool.query('UPDATE game_sessions SET category_id=NULL WHERE category_id=$1', [sourceCategoryId]);
+        await pool.query('UPDATE score_resets SET category_id=NULL WHERE category_id=$1', [sourceCategoryId]);
+        await pool.query('UPDATE custom_category_groups SET include_category_ids = array_replace(include_category_ids, $1::int, $2::int) WHERE $1::int = ANY(include_category_ids)', [sourceCategoryId, targetCategoryId]);
+        await pool.query('UPDATE custom_category_groups SET exclude_category_ids = array_replace(exclude_category_ids, $1::int, $2::int) WHERE $1::int = ANY(exclude_category_ids)', [sourceCategoryId, targetCategoryId]);
+        await pool.query('UPDATE discord_trivia_schedules SET category_id=NULL WHERE category_id=$1', [sourceCategoryId]);
+        await pool.query('UPDATE discord_trivia_sessions SET category_id=NULL WHERE category_id=$1', [sourceCategoryId]);
+        await pool.query('UPDATE discord_trivia_answers SET category_id=NULL WHERE category_id=$1', [sourceCategoryId]);
+        await runQuery('DELETE FROM categories WHERE id=$1', [sourceCategoryId]);
+        await auditLog(getTokenUser(req)?.id || null, 'CATEGORY_MERGE',
+            `Merged category ${sourceCategoryId} ("${srcName}") into ${targetCategoryId} ("${tgtName}") - ${qResult.rowCount} questions moved`);
+
+        res.json({ success: true, questionsMoved: qResult.rowCount, sourceCategory: srcName, targetCategory: tgtName });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ── QUESTIONS ──────────────────────────────────────────────────────────────────
 app.get('/categories/:catId/questions', async (req, res) => {
     if (!requireAdmin(req, res)) return;

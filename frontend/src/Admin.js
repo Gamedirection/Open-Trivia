@@ -302,6 +302,11 @@ export default function Admin() {
     const [exportingCats, setExportingCats] = useState(false);
     const [importingCats, setImportingCats] = useState(false);
     const [githubRepoUrl, setGithubRepoUrl] = useState('');
+    // Category merge
+    const [mergeSourceId, setMergeSourceId] = useState('');
+    const [mergeTargetId, setMergeTargetId] = useState('');
+    const [mergeConfirm, setMergeConfirm] = useState(false);
+    const [merging, setMerging] = useState(false);
     // Data management
     const [backups, setBackups] = useState([]);
     const [backupLoading, setBackupLoading] = useState(false);
@@ -594,6 +599,35 @@ export default function Admin() {
         } catch (e) {
             flash('❌ ' + (e.response?.data?.error || 'Rename failed'));
         }
+    };
+
+    const mergeCategories = async () => {
+        const srcCat = categories.find(c => c.id === Number(mergeSourceId));
+        const tgtCat = categories.find(c => c.id === Number(mergeTargetId));
+        if (!srcCat || !tgtCat) return flash('❌ Select both source and target categories');
+        if (!window.confirm(
+            `⚠️ DESTRUCTIVE ACTION ⚠️\n\n` +
+            `This will merge "${srcCat.name}" INTO "${tgtCat.name}".\n\n` +
+            `All questions from "${srcCat.name}" will be moved to "${tgtCat.name}".\n` +
+            `"${srcCat.name}" will be PERMANENTLY DELETED.\n\n` +
+            `Game sessions, score resets, and scheduled trivia referencing the old category will be cleared.\n\n` +
+            `A full backup snapshot will be saved before the merge.\n\n` +
+            `This CANNOT be easily undone. Continue?`
+        )) return;
+        setMerging(true);
+        try {
+            const res = await axios.post(`${API_URL}/admin/categories/merge`, {
+                sourceCategoryId: Number(mergeSourceId),
+                targetCategoryId: Number(mergeTargetId)
+            }, authCfg());
+            flash(`✅ Merged "${res.data.sourceCategory}" into "${res.data.targetCategory}" - ${res.data.questionsMoved} questions moved`);
+            setMergeSourceId(''); setMergeTargetId(''); setMergeConfirm(false);
+            if (selCat?.id === Number(mergeSourceId)) { setSelCat(null); setQuestions([]); }
+            loadCategories();
+        } catch (e) {
+            flash('❌ ' + (e.response?.data?.error || 'Merge failed'));
+        }
+        setMerging(false);
     };
 
     // ── Question actions ───────────────────────────────────────────────────────
@@ -1208,6 +1242,42 @@ export default function Admin() {
                             />
                             <button onClick={addCategory} className="btn btn-primary" style={{ padding: '9px 20px' }}>Add</button>
                         </div>
+                    </div>
+
+                    <div style={{ ...cardStyle, marginBottom: '20px', border: '2px solid #dc3545', background: 'linear-gradient(135deg, var(--card-bg) 0%, rgba(220,53,69,0.06) 100%)' }}>
+                        <h3 style={{ marginBottom: '8px', color: '#dc3545' }}>⚠️ Merge Categories (Destructive)</h3>
+                        <p style={{ margin: '0 0 14px', fontSize: '13px', color: '#888', lineHeight: '1.5' }}>
+                            Select a source category to merge INTO a target. All questions move to the target. The source is permanently deleted. A full backup is saved automatically before the merge.
+                        </p>
+                        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                            <div style={{ flex: 1, minWidth: '180px' }}>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', color: '#dc3545' }}>Source (will be deleted)</label>
+                                <select value={mergeSourceId} onChange={e => setMergeSourceId(e.target.value)}
+                                    style={{ width: '100%', padding: '9px', borderRadius: '6px', border: '1px solid #dc3545', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)', fontSize: '14px' }}>
+                                    <option value="">Select source...</option>
+                                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}{c.disabled ? ' (disabled)' : ''}</option>)}
+                                </select>
+                            </div>
+                            <div style={{ fontSize: '24px', color: '#dc3545', paddingBottom: '4px' }}>→</div>
+                            <div style={{ flex: 1, minWidth: '180px' }}>
+                                <label style={{ display: 'block', fontSize: '12px', fontWeight: 'bold', marginBottom: '4px', color: '#28a745' }}>Target (keeps all questions)</label>
+                                <select value={mergeTargetId} onChange={e => setMergeTargetId(e.target.value)}
+                                    style={{ width: '100%', padding: '9px', borderRadius: '6px', border: '1px solid #28a745', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)', fontSize: '14px' }}>
+                                    <option value="">Select target...</option>
+                                    {categories.filter(c => c.id !== Number(mergeSourceId)).map(c => <option key={c.id} value={c.id}>{c.name}{c.disabled ? ' (disabled)' : ''}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '12px', fontSize: '13px', cursor: 'pointer', color: 'var(--text-color)' }}>
+                            <input type="checkbox" checked={mergeConfirm} onChange={e => setMergeConfirm(e.target.checked)}
+                                style={{ width: '16px', height: '16px', accentColor: '#dc3545' }} />
+                            I understand this is destructive, will delete a category and all its data, and cannot be easily undone
+                        </label>
+                        <button className="btn" disabled={!mergeSourceId || !mergeTargetId || !mergeConfirm || merging}
+                            onClick={mergeCategories}
+                            style={{ marginTop: '12px', padding: '9px 20px', backgroundColor: (mergeSourceId && mergeTargetId && mergeConfirm) ? '#dc3545' : '#6c757d', color: 'white', fontWeight: 'bold', opacity: merging ? 0.7 : 1 }}>
+                            {merging ? 'Merging...' : '🔀 Merge Categories'}
+                        </button>
                     </div>
 
                     <h3 style={{ marginBottom: '12px' }}>Existing ({categories.length})</h3>
