@@ -51,6 +51,9 @@ export default function Dashboard() {
             return true;
         }
     });
+    const [shareplayStatus, setShareplayStatus] = useState(null);
+    const [appealMessage, setAppealMessage] = useState('');
+    const [appealSubmitting, setAppealSubmitting] = useState(false);
 
     const fetchStats = async () => {
         if (!token) return;
@@ -210,6 +213,22 @@ export default function Dashboard() {
         window.dispatchEvent(new Event('leaderboard-pref-updated'));
     };
 
+    const submitAppeal = async () => {
+        if (!appealMessage.trim()) return;
+        setAppealSubmitting(true);
+        try {
+            await axios.post(`${API_URL}/me/shareplay/appeal`, { message: appealMessage.trim() }, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
+            setShareplayStatus(prev => ({ ...prev, has_pending_appeal: true }));
+            setAppealMessage('');
+        } catch (err) {
+            alert(err.response?.data?.error || 'Failed to submit appeal.');
+        } finally {
+            setAppealSubmitting(false);
+        }
+    };
+
     const resetScore = async (categoryId) => {
         if (!token) return;
         const label = categoryId ? 'this category' : 'all categories';
@@ -293,6 +312,13 @@ export default function Dashboard() {
         fetchProfile();
         fetchCategoryGroups();
         fetchCategories();
+    }, []);
+
+    useEffect(() => {
+        if (!token) return;
+        axios.get(`${API_URL}/me/shareplay/status`, {
+            headers: { Authorization: `Bearer ${token}` }
+        }).then(res => setShareplayStatus(res.data)).catch(() => {});
     }, []);
 
     if (!token) {
@@ -677,6 +703,51 @@ export default function Dashboard() {
                     <p style={{ color: '#888' }}>No recent activity.</p>
                 )}
             </div>
+
+            {shareplayStatus?.banned && (
+                <div style={{ border: '2px solid #ffc107', borderRadius: '8px', padding: '16px', backgroundColor: 'var(--card-bg)', marginBottom: '14px' }}>
+                    <div style={{ fontSize: '0.78rem', color: '#856404', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', fontWeight: 'bold' }}>⚠ SharePlay Status</div>
+                    <div style={{ fontSize: '14px', color: 'var(--text-color)', marginBottom: '8px' }}>
+                        You are currently <strong>blocked from SharePlay</strong>.
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#666', marginBottom: '4px' }}>
+                        Strikes: <strong>{shareplayStatus.strike_count || 0}</strong>
+                    </div>
+                    {shareplayStatus.ban_reason && (
+                        <div style={{ fontSize: '13px', color: '#666', marginBottom: '4px' }}>
+                            Reason: {shareplayStatus.ban_reason}
+                        </div>
+                    )}
+                    {shareplayStatus.banned_until && (
+                        <div style={{ fontSize: '13px', color: '#666', marginBottom: '8px' }}>
+                            Expires: {new Date(shareplayStatus.banned_until).toLocaleString()}
+                        </div>
+                    )}
+                    {shareplayStatus.has_pending_appeal ? (
+                        <div style={{ fontSize: '13px', color: '#856404', fontWeight: 'bold', marginTop: '8px' }}>
+                            Your appeal is pending review.
+                        </div>
+                    ) : (
+                        <div style={{ marginTop: '10px' }}>
+                            <textarea
+                                value={appealMessage}
+                                onChange={e => setAppealMessage(e.target.value)}
+                                placeholder="Explain why you believe this block should be lifted..."
+                                rows={3}
+                                style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)', fontSize: '13px', resize: 'vertical', boxSizing: 'border-box' }}
+                            />
+                            <button
+                                className="btn btn-primary"
+                                onClick={submitAppeal}
+                                disabled={appealSubmitting || !appealMessage.trim()}
+                                style={{ marginTop: '8px', padding: '8px 16px', fontSize: '13px' }}
+                            >
+                                {appealSubmitting ? 'Submitting...' : 'Submit Appeal'}
+                            </button>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }

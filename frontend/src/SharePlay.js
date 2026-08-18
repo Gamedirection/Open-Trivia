@@ -257,6 +257,10 @@ export default function SharePlay() {
     const [statusMsg, setStatusMsg]   = useState('');
     const [copied, setCopied]         = useState(false);
 
+    const [kickTarget, setKickTarget] = useState(null);
+    const [kickVote, setKickVote] = useState(null);
+    const [kickVoteCounts, setKickVoteCounts] = useState({ votesFor: 0, votesAgainst: 0 });
+
     const user = getStoredUser();
     const isAdmin = user?.role === 'admin';
     const myPlayer = players.find(p => p.userId && p.userId === user?.id);
@@ -396,6 +400,41 @@ export default function SharePlay() {
         return () => document.removeEventListener('keydown', handler);
     }, []);
 
+    useEffect(() => {
+        const socket = socketRef.current;
+        if (!socket) return;
+
+        const onKickStarted = (data) => {
+            setKickVote({ ...data, hasVoted: false });
+        };
+        const onKickUpdate = (data) => {
+            setKickVote(v => v ? { ...v, votesFor: data.votesFor, votesAgainst: data.votesAgainst } : null);
+        };
+        const onKickCancelled = () => {
+            setKickVote(null);
+        };
+        const onPlayerKicked = (data) => {
+            setKickVote(null);
+        };
+        const onKicked = (data) => {
+            alert(data.message || 'You have been kicked.');
+        };
+
+        socket.on('kick_vote_started', onKickStarted);
+        socket.on('kick_vote_update', onKickUpdate);
+        socket.on('kick_vote_cancelled', onKickCancelled);
+        socket.on('player_kicked', onPlayerKicked);
+        socket.on('kicked', onKicked);
+
+        return () => {
+            socket.off('kick_vote_started', onKickStarted);
+            socket.off('kick_vote_update', onKickUpdate);
+            socket.off('kick_vote_cancelled', onKickCancelled);
+            socket.off('player_kicked', onPlayerKicked);
+            socket.off('kicked', onKicked);
+        };
+    }, []);
+
     // ── Actions ───────────────────────────────────────────────────────────────
 
     const joinLive  = useCallback(() => { setRoomError(''); socketRef.current?.emit('join_live_room'); }, []);
@@ -425,6 +464,7 @@ export default function SharePlay() {
         setRoomCode(null); setPhase('lobby'); setCurrentQuestion(null);
         setRoundResult(null); setMyVote(null); setPlayers([]);
         setStatusMsg(''); setRoomError(''); setIsHost(false);
+        setKickTarget(null); setKickVote(null);
         socketRef.current?.emit('get_rooms');
     }, []);
 
@@ -667,10 +707,10 @@ export default function SharePlay() {
                 </div>
 
                 {/* ── TV Body ── */}
-                <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 280px', gap: '20px', padding: '20px 28px', overflow: 'hidden' }}>
+                <div className="sp-tv-grid" style={{ flex: 1, padding: '20px 28px', overflow: 'hidden' }}>
 
                     {/* Center */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'hidden' }}>
+                    <div className="sp-tv-center" style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflow: 'hidden' }}>
 
                         {phase === 'waiting' && (
                             <div style={{ ...tvCard, flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '20px' }}>
@@ -795,7 +835,7 @@ export default function SharePlay() {
                     </div>
 
                     {/* Right: scoreboard */}
-                    <div style={{ ...tvCard, display: 'flex', flexDirection: 'column', gap: '10px', overflow: 'hidden' }}>
+                    <div className="sp-tv-right" style={{ ...tvCard, display: 'flex', flexDirection: 'column', gap: '10px', overflow: 'hidden' }}>
                         <div style={{ fontSize: '0.78rem', color: '#8b949e', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 'bold', marginBottom: '4px' }}>Top Players</div>
                         {players.length === 0 && <div style={{ color: '#8b949e', fontSize: '0.9rem' }}>Waiting…</div>}
                         {players.map((p, i) => (
@@ -853,45 +893,70 @@ export default function SharePlay() {
 
             {roomError && <div style={{ background: '#f8d7da', color: '#721c24', padding: '10px 16px', borderRadius: '8px', marginBottom: '12px' }}>{roomError}</div>}
 
-            <div style={{ display: 'grid', gridTemplateColumns: '200px 1fr 220px', gap: '14px' }}>
+            {kickVote && (
+                <div style={{ background: '#fff3cd', border: '2px solid #ffc107', borderRadius: '10px', padding: '14px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '1.2rem' }}>⚠</span>
+                        <span style={{ fontWeight: 'bold' }}>{kickVote.initiatedByName} wants to kick {kickVote.targetDisplayName}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '8px', fontSize: '0.85rem' }}>
+                        <span style={{ color: '#dc3545' }}>{kickVote.votesFor} for</span>
+                        <span>|</span>
+                        <span style={{ color: '#28a745' }}>{kickVote.votesAgainst} against</span>
+                        <span>|</span>
+                        <span>{kickVote.totalPlayers - 1} voters</span>
+                    </div>
+                    {kickVote.targetSocketId !== socketRef.current?.id && !kickVote.hasVoted && (
+                        <div style={{ display: 'flex', gap: '8px' }}>
+                            <button style={{ padding: '6px 14px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }} onClick={() => { socketRef.current?.emit('vote_kick', { vote: 'for' }); setKickVote(v => ({ ...v, hasVoted: true, votesFor: v.votesFor + 1 })); }}>
+                                Vote FOR kick
+                            </button>
+                            <button style={{ padding: '6px 14px', background: '#28a745', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.85rem' }} onClick={() => { socketRef.current?.emit('vote_kick', { vote: 'against' }); setKickVote(v => ({ ...v, hasVoted: true, votesAgainst: v.votesAgainst + 1 })); }}>
+                                Vote AGAINST
+                            </button>
+                        </div>
+                    )}
+                    {kickVote.hasVoted && <div style={{ fontSize: '0.82rem', color: '#856404' }}>You voted. Waiting for others...</div>}
+                </div>
+            )}
 
-                {/* ── LEFT: Scoreboard ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                    <div style={{ ...card, padding: '14px' }}>
-                        <div style={{ fontSize: '0.78rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', fontWeight: 'bold' }}>Top Players</div>
-                        {players.length === 0 && <div style={{ color: '#888', fontSize: '0.85rem' }}>Waiting…</div>}
-                        {players.map((p, i) => (
-                            <div key={p.userId || p.displayName} style={{ padding: '6px 0', borderBottom: i < players.length - 1 ? '1px solid var(--border-color,#eee)' : 'none', background: p.userId === user?.id ? 'rgba(0,123,255,0.07)' : 'transparent', borderRadius: '4px' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
-                                        <span style={{ fontWeight: 'bold', color: '#888', fontSize: '0.75rem', flexShrink: 0 }}>#{i + 1}</span>
-                                        {p.isHost && <span style={{ fontSize: '0.7rem' }}>👑</span>}
-                                        <span style={{ fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: p.userId === user?.id ? 'bold' : 'normal' }}>{p.displayName}</span>
-                                        {p.rating && <RatingBadge rating={p.rating} />}
-                                    </div>
-                                    <span style={{ fontWeight: 'bold', fontSize: '0.88rem', flexShrink: 0, marginLeft: '4px' }}>{p.sessionScore}</span>
+            <div className="sp-grid">
+
+                {/* ── LEFT: Players ── */}
+                <div className="sp-players" style={{ ...card, padding: '14px' }}>
+                    <div style={{ fontSize: '0.78rem', color: '#888', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '10px', fontWeight: 'bold' }}>Top Players</div>
+                    {players.length === 0 && <div style={{ color: '#888', fontSize: '0.85rem' }}>Waiting…</div>}
+                    {players.map((p, i) => (
+                        <div key={p.userId || p.displayName} style={{ padding: '6px 0', borderBottom: i < players.length - 1 ? '1px solid var(--border-color,#eee)' : 'none', background: p.userId === user?.id ? 'rgba(0,123,255,0.07)' : 'transparent', borderRadius: '4px', cursor: (p.userId && p.userId !== user?.id && !p.isHost) ? 'pointer' : 'default' }} onClick={() => { if (p.userId && p.userId !== user?.id && !p.isHost) { setKickTarget(p); } }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', minWidth: 0 }}>
+                                    <span style={{ fontWeight: 'bold', color: '#888', fontSize: '0.75rem', flexShrink: 0 }}>#{i + 1}</span>
+                                    {p.isHost && <span style={{ fontSize: '0.7rem' }}>👑</span>}
+                                    <span style={{ fontSize: '0.82rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: p.userId === user?.id ? 'bold' : 'normal' }}>{p.displayName}</span>
+                                    {p.rating && <RatingBadge rating={p.rating} />}
                                 </div>
-                                {settings.showPlayerStats && p.totalAnswered > 0 && (
-                                    <div style={{ fontSize: '0.72rem', color: '#888', marginTop: '2px', paddingLeft: '18px' }}>
-                                        {p.correctCount}/{p.totalAnswered} correct
-                                    </div>
-                                )}
+                                <span style={{ fontWeight: 'bold', fontSize: '0.88rem', flexShrink: 0, marginLeft: '4px' }}>{p.sessionScore}</span>
                             </div>
-                        ))}
-                    </div>
+                            {settings.showPlayerStats && p.totalAnswered > 0 && (
+                                <div style={{ fontSize: '0.72rem', color: '#888', marginTop: '2px', paddingLeft: '18px' }}>
+                                    {p.correctCount}/{p.totalAnswered} correct
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
 
-                    {/* Scoring guide */}
-                    <div style={{ ...card, padding: '12px', fontSize: '0.78rem', color: '#888' }}>
-                        <strong style={{ display: 'block', color: 'var(--text-color)', marginBottom: '5px' }}>Scoring</strong>
-                        <div>✓ Correct: {settings.pointsCorrect} + {settings.timeBonus}×sec</div>
-                        <div>✗ Wrong: {settings.pointsIncorrect} pt</div>
-                        <div style={{ marginTop: '4px' }}>🥇 +{settings.goldBonus} &nbsp;🥈 +{settings.silverBonus} &nbsp;🥉 +{settings.bronzeBonus}</div>
-                        <div style={{ marginTop: '4px' }}>Session resets after 30 min idle</div>
-                    </div>
+                {/* Scoring guide */}
+                <div className="sp-scoring" style={{ ...card, padding: '12px', fontSize: '0.78rem', color: '#888' }}>
+                    <strong style={{ display: 'block', color: 'var(--text-color)', marginBottom: '5px' }}>Scoring</strong>
+                    <div>✓ Correct: {settings.pointsCorrect} + {settings.timeBonus}×sec</div>
+                    <div>✗ Wrong: {settings.pointsIncorrect} pt</div>
+                    <div style={{ marginTop: '4px' }}>🥇 +{settings.goldBonus} &nbsp;🥈 +{settings.silverBonus} &nbsp;🥉 +{settings.bronzeBonus}</div>
+                    <div style={{ marginTop: '4px' }}>Session resets after 30 min idle</div>
                 </div>
 
                 {/* ── CENTER: Game area ── */}
-                <div>
+                <div className="sp-center">
                     {/* WAITING */}
                     {phase === 'waiting' && (
                         <div style={{ ...card, textAlign: 'center', padding: '40px 20px' }}>
@@ -994,7 +1059,7 @@ export default function SharePlay() {
                 </div>
 
                 {/* ── RIGHT: Live vote counts + settings ── */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                <div className="sp-right" style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     {/* Live vote tally */}
                     {phase === 'question' && currentQuestion && settings.showLiveVotes && (
                         <div style={{ ...card, padding: '14px' }}>
@@ -1056,11 +1121,10 @@ export default function SharePlay() {
                         />
                     )}
                 </div>
-            </div>
 
-            {/* ── Question actions bar (persists across question changes) ── */}
+            {/* ── Question actions bar (grid child for mobile reorder) ── */}
             {currentQuestion && (
-                <div style={{ marginTop: '14px', display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <div className="sp-actions-wrap" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
                     <button
                         style={{ ...btn('var(--header-bg,#343a40)'), fontSize: '0.85rem', padding: '7px 14px' }}
                         onClick={handleSuggest}
@@ -1111,6 +1175,22 @@ export default function SharePlay() {
                     {reportMessage && !showReportMenu && (
                         <span style={{ fontSize: '0.85rem', color: reportMessage.startsWith('✅') ? '#155724' : '#856404' }}>{reportMessage}</span>
                     )}
+                </div>
+            )}
+
+            </div>
+
+            {kickTarget && (
+                <div style={{ position: 'fixed', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'var(--card-bg,#fff)', border: '2px solid #ffc107', borderRadius: '12px', padding: '20px', zIndex: 100, boxShadow: '0 8px 24px rgba(0,0,0,0.2)', minWidth: '280px' }}>
+                    <div style={{ fontSize: '1.2rem', textAlign: 'center', marginBottom: '6px' }}>⚠</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '1rem', marginBottom: '4px', textAlign: 'center' }}>Kick {kickTarget.displayName}?</div>
+                    <div style={{ fontSize: '0.82rem', color: '#888', marginBottom: '14px', textAlign: 'center' }}>Vote to remove this player from the room.</div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                        <button style={{ flex: 1, padding: '10px', background: '#dc3545', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { socketRef.current?.emit('initiate_kick', { targetSocketId: kickTarget.socketId }); setKickTarget(null); }}>
+                            Vote to Kick
+                        </button>
+                        <button style={{ padding: '10px 16px', background: 'var(--border-color,#ddd)', color: 'var(--text-color,#333)', border: 'none', borderRadius: '8px', cursor: 'pointer' }} onClick={() => setKickTarget(null)}>Cancel</button>
+                    </div>
                 </div>
             )}
 

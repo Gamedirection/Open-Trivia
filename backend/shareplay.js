@@ -47,6 +47,7 @@ function makeRoom(code, isLive = false) {
         lastActivity: Date.now(),
         lastEmptyAt: null,          // timestamp when last player left (for auto-delete)
         usedQuestionIds: new Set(),
+        kickVote: null,
     };
 }
 
@@ -63,10 +64,11 @@ function calcRating(p) {
 }
 
 function playerList(room) {
-    return [...room.players.values()]
-        .sort((a, b) => b.sessionScore - a.sessionScore)
+    return [...room.players.entries()]
+        .sort(([,a], [,b]) => b.sessionScore - a.sessionScore)
         .slice(0, 10)
-        .map(p => ({
+        .map(([sid, p]) => ({
+            socketId: sid,
             displayName: p.displayName,
             sessionScore: p.sessionScore,
             userId: p.userId || null,
@@ -389,6 +391,88 @@ function applySettings(room, data) {
 
 // ── Module export ─────────────────────────────────────────────────────────────
 
+async function executeKick(room, code, pool, io) {
+    const kv = room.kickVote;
+    if (!kv) return;
+    
+    const targetSocketId = kv.targetSocketId;
+    const target = room.players.get(targetSocketId);
+    
+    const voters = [];
+    for (const [sid, vote] of kv.votes) {
+        const p = room.players.get(sid);
+        voters.push({ userId: p?.userId, displayName: p?.displayName, vote });
+    }
+    
+    try {
+        if (kv.targetUserId) {
+            await pool.query(
+                `INSERT INTO shareplay_kick_history (target_user_id, room_code, initiated_by_user_id, voters)
+                 VALUES ($1, $2, $3, $4)`,
+                [kv.targetUserId, code, room.players.get(kv.initiatedBy)?.userId, JSON.stringify(voters)]
+            );
+            
+            const result = await pool.query(
+                `INSERT INTO shareplay_kick_strikes (user_id, strike_count, last_kick_at)
+                 VALUES ($1, 1, NOW())
+                 ON CONFLICT (user_id) DO UPDATE SET strike_count = shareplay_kick_strikes.strike_count + 1, last_kick_at = NOW()
+                 RETURNING strike_count`,
+                [kv.targetUserId]
+            );
+            
+            const strikes = result.rows[0].strike_count;
+            let banUntil = null;
+            let banReason = `Kicked from SharePlay (${strikes} strike${strikes > 1 ? 's' : ''})`;
+            
+            if (strikes === 1) {
+                banUntil = new Date(Date.now() + 30 * 60 * 1000);
+            } else if (strikes === 2) {
+                banUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            } else {
+                await pool.query('UPDATE users SET shareplay_banned = TRUE WHERE id = $1', [kv.targetUserId]);
+                await pool.query(
+                    `INSERT INTO shareplay_bans (user_id, ban_type, reason, is_permanent)
+                     VALUES ($1, 'shareplay', $2, TRUE)`,
+                    [kv.targetUserId, banReason]
+                );
+                banReason = 'Permanently banned from SharePlay. Please appeal via your profile.';
+            }
+            
+            if (strikes < 3) {
+                await pool.query(
+                    `INSERT INTO shareplay_bans (user_id, ban_type, reason, banned_until)
+                     VALUES ($1, 'shareplay', $2, $3)`,
+                    [kv.targetUserId, banReason, banUntil]
+                );
+            }
+        }
+    } catch (err) {
+        console.error('[SharePlay] executeKick error:', err.message);
+    }
+    
+    io.to(code).emit('player_kicked', {
+        targetSocketId,
+        targetDisplayName: kv.targetDisplayName,
+        strikeCount: 0,
+    });
+    
+    const targetSock = io.sockets.sockets.get(targetSocketId);
+    if (targetSock) {
+        targetSock.emit('kicked', { message: kv.targetUserId ? 'You have been kicked from this room.' : 'You have been kicked.' });
+        targetSock.disconnect(true);
+    }
+    
+    room.kickVote = null;
+    
+    io.to(code).emit('players_update', { players: playerList(room) });
+}
+
+function cancelKickVote(room, code, io) {
+    if (room.kickVote?.timer) clearTimeout(room.kickVote.timer);
+    room.kickVote = null;
+    io.to(code).emit('kick_vote_cancelled', { message: 'Vote to kick cancelled.' });
+}
+
 module.exports = function initSharePlay(server, pool, jwtSecret) {
     const io = new Server(server, {
         cors: { origin: '*', methods: ['GET', 'POST'] },
@@ -434,12 +518,24 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
 
         function isAppAdmin() { return getProfile().role === 'admin'; }
 
-        function addToRoom(code) {
+        async function addToRoom(code) {
             const room = rooms.get(code);
             if (!room) return false;
             if (currentCode && currentCode !== code) dropFromRoom();
 
             const profile = getProfile();
+            if (profile.userId) {
+                try {
+                    const banCheck = await pool.query(
+                        "SELECT 1 FROM shareplay_bans WHERE user_id = $1 AND unbanned_at IS NULL AND (banned_until IS NULL OR banned_until > NOW())",
+                        [profile.userId]
+                    );
+                    if (banCheck.rows.length) {
+                        socket.emit('room_error', { message: 'You are currently banned from SharePlay. Please appeal via your profile.' });
+                        return false;
+                    }
+                } catch {}
+            }
             const now = Date.now();
             let sessionScore = 0, totalAnswered = 0, correctCount = 0;
 
@@ -498,6 +594,9 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             const room = rooms.get(currentCode);
             if (room) {
                 const wasHost = !room.isLive && room.hostSocketId === socket.id;
+                if (room.kickVote && room.kickVote.initiatedBy === socket.id) {
+                    cancelKickVote(room, currentCode, io);
+                }
                 room.players.delete(socket.id);
                 room.votes.delete(socket.id);
                 const orderIdx = room.answerOrder.indexOf(socket.id);
@@ -540,15 +639,15 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             socket.emit('rooms_list', { rooms: publicRooms() });
         });
 
-        socket.on('join_live_room', () => {
-            if (!addToRoom(LIVE_CODE)) { socket.emit('room_error', { message: 'Live room unavailable.' }); return; }
+        socket.on('join_live_room', async () => {
+            if (!await addToRoom(LIVE_CODE)) { socket.emit('room_error', { message: 'Live room unavailable.' }); return; }
             const room = rooms.get(LIVE_CODE);
             sendRoomJoined(LIVE_CODE, room, false);
             io.to(LIVE_CODE).emit('players_update', { players: playerList(room) });
             if (room.phase === 'waiting') startRound(LIVE_CODE, pool, io);
         });
 
-        socket.on('create_room', (data) => {
+        socket.on('create_room', async (data) => {
             const code = generateCode();
             const room = makeRoom(code, false);
             const profile = getProfile();
@@ -558,16 +657,16 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             if (data?.isPublic !== undefined) room.isPublic = !!data.isPublic;
             rooms.set(code, room);
 
-            addToRoom(code);
+            await addToRoom(code);
             const p = room.players.get(socket.id);
             if (p) p.isHost = true;
             sendRoomJoined(code, room, true);
         });
 
-        socket.on('join_room', (data) => {
+        socket.on('join_room', async (data) => {
             const code = String(data?.code || '').trim();
             if (!rooms.has(code)) { socket.emit('room_error', { message: 'Room not found. Check the code and try again.' }); return; }
-            if (!addToRoom(code)) return;
+            if (!await addToRoom(code)) return;
             const room = rooms.get(code);
             const profile = getProfile();
             const isHost = room.hostSocketId === socket.id || (profile.userId && profile.userId === room.hostUserId);
@@ -647,6 +746,75 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
             if (!room) { socket.emit('room_error', { message: 'Room not found.' }); return; }
             applySettings(room, data);
             io.to(targetCode).emit('room_settings', roomSettings(room));
+        });
+
+        socket.on('initiate_kick', (data) => {
+            if (!currentCode) return;
+            const room = rooms.get(currentCode);
+            if (!room) return;
+            const profile = getProfile();
+            const targetSocketId = data?.targetSocketId;
+            if (!targetSocketId || !room.players.has(targetSocketId)) return;
+            if (targetSocketId === socket.id) return;
+            if (room.kickVote) { socket.emit('room_error', { message: 'A vote is already in progress.' }); return; }
+            
+            const target = room.players.get(targetSocketId);
+            room.kickVote = {
+                targetSocketId,
+                targetUserId: target.userId,
+                targetDisplayName: target.displayName,
+                initiatedBy: socket.id,
+                votes: new Map(),
+                timer: null,
+            };
+            room.kickVote.votes.set(socket.id, 'for');
+            
+            io.to(currentCode).emit('kick_vote_started', {
+                targetSocketId,
+                targetDisplayName: target.displayName,
+                initiatedByName: profile.displayName,
+                votesFor: 1,
+                votesAgainst: 0,
+                totalPlayers: room.players.size,
+            });
+        });
+
+        socket.on('vote_kick', (data) => {
+            if (!currentCode) return;
+            const room = rooms.get(currentCode);
+            if (!room || !room.kickVote) return;
+            if (socket.id === room.kickVote.targetSocketId) return;
+            const vote = data?.vote;
+            if (!['for', 'against'].includes(vote)) return;
+            
+            room.kickVote.votes.set(socket.id, vote);
+            
+            let votesFor = 0, votesAgainst = 0;
+            for (const v of room.kickVote.votes.values()) {
+                if (v === 'for') votesFor++;
+                else votesAgainst++;
+            }
+            
+            io.to(currentCode).emit('kick_vote_update', {
+                targetSocketId: room.kickVote.targetSocketId,
+                targetDisplayName: room.kickVote.targetDisplayName,
+                votesFor,
+                votesAgainst,
+                totalPlayers: room.players.size,
+            });
+            
+            const nonTargetPlayers = room.players.size - 1;
+            if (votesFor >= Math.ceil(nonTargetPlayers / 2) || (votesFor > 0 && votesFor === votesAgainst)) {
+                executeKick(room, currentCode, pool, io);
+            }
+        });
+
+        socket.on('cancel_kick', () => {
+            if (!currentCode) return;
+            const room = rooms.get(currentCode);
+            if (!room || !room.kickVote) return;
+            if (room.kickVote.initiatedBy !== socket.id) return;
+            cancelKickVote(room, currentCode, io);
         });
 
         socket.on('leave_room', () => dropFromRoom());

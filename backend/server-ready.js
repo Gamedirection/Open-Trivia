@@ -945,7 +945,8 @@ async function initDatabase() {
                 discord_id VARCHAR(50) UNIQUE,
                 discord_username VARCHAR(255),
                 discord_avatar_url TEXT,
-                animations_enabled BOOLEAN DEFAULT TRUE
+                animations_enabled BOOLEAN DEFAULT TRUE,
+                shareplay_banned BOOLEAN DEFAULT FALSE
             );
             CREATE TABLE IF NOT EXISTS categories (
                 id SERIAL PRIMARY KEY,
@@ -1353,6 +1354,43 @@ async function initDatabase() {
                 ended_at TIMESTAMP,
                 correct_answer CHAR(1),
                 timer_seconds INT DEFAULT 15
+            )`,
+            `ALTER TABLE users ADD COLUMN IF NOT EXISTS shareplay_banned BOOLEAN DEFAULT FALSE`,
+            `CREATE TABLE IF NOT EXISTS shareplay_kick_strikes (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                strike_count INT DEFAULT 0,
+                last_kick_at TIMESTAMP,
+                UNIQUE(user_id)
+            )`,
+            `CREATE TABLE IF NOT EXISTS shareplay_bans (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                ban_type VARCHAR(20) NOT NULL DEFAULT 'shareplay',
+                banned_until TIMESTAMP,
+                reason TEXT,
+                admin_id INT REFERENCES users(id),
+                is_permanent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                unbanned_at TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS shareplay_appeals (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                message TEXT NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                admin_response TEXT,
+                admin_id INT REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP
+            )`,
+            `CREATE TABLE IF NOT EXISTS shareplay_kick_history (
+                id SERIAL PRIMARY KEY,
+                target_user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                room_code VARCHAR(10),
+                initiated_by_user_id INT REFERENCES users(id),
+                voters JSONB DEFAULT '[]',
+                kicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )`,
         ];
         for (const m of migrations) {
@@ -4551,6 +4589,165 @@ app.get('/admin/audit-log', async (req, res) => {
             LIMIT 100
         `);
         res.json(r.rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── ADMIN: SHAREPLAY KICK/VOTE MANAGEMENT ─────────────────────────────────────
+app.post('/admin/users/:id/clear-leaderboard', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    try {
+        await pool.query('UPDATE users SET score = 0 WHERE id = $1', [id]);
+        await pool.query('INSERT INTO score_resets (scope, user_id, reset_by_admin_id, reason) VALUES ($1, $2, $3, $4)',
+            ['user', id, admin.id, reason || 'Admin cleared leaderboard']);
+        await pool.query('INSERT INTO audit_logs (admin_id, action, details) VALUES ($1, $2, $3)',
+            [admin.id, 'clear_leaderboard', `Cleared leaderboard for user #${id}`]);
+        res.json({ message: 'Leaderboard cleared.' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.delete('/admin/users/:id', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { id } = req.params;
+    if (Number(id) === admin.id) return res.status(400).json({ error: 'Cannot delete your own account.' });
+    try {
+        const user = await pool.query('SELECT email FROM users WHERE id = $1', [id]);
+        if (!user.rows.length) return res.status(404).json({ error: 'User not found.' });
+        await pool.query('DELETE FROM users WHERE id = $1', [id]);
+        await pool.query('INSERT INTO audit_logs (admin_id, action, details) VALUES ($1, $2, $3)',
+            [admin.id, 'delete_user', `Deleted user ${user.rows[0].email} (#${id})`]);
+        res.json({ message: 'User deleted.' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/shareplay/bans', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const { rows } = await pool.query(`
+            SELECT b.*, u.email, u.display_name,
+                   a.email AS admin_email
+            FROM shareplay_bans b
+            JOIN users u ON u.id = b.user_id
+            LEFT JOIN users a ON a.id = b.admin_id
+            ORDER BY b.created_at DESC
+        `);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/shareplay/unblock/:userId', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { userId } = req.params;
+    try {
+        await pool.query("UPDATE shareplay_bans SET unbanned_at = NOW(), is_permanent = FALSE WHERE user_id = $1 AND unbanned_at IS NULL", [userId]);
+        await pool.query('UPDATE users SET shareplay_banned = FALSE WHERE id = $1', [userId]);
+        await pool.query('INSERT INTO audit_logs (admin_id, action, details) VALUES ($1, $2, $3)',
+            [admin.id, 'shareplay_unblock', `Unblocked user #${userId} from SharePlay`]);
+        res.json({ message: 'User unblocked.' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/shareplay/block/:userId', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { userId } = req.params;
+    const { minutes, reason } = req.body || {};
+    try {
+        const blockedUntil = minutes === 0 ? null : new Date(Date.now() + (minutes || 1440) * 60000);
+        await pool.query('UPDATE users SET blocked_until = $1, blocked_reason = $2 WHERE id = $3',
+            [blockedUntil, reason || 'Blocked by admin', userId]);
+        await pool.query('INSERT INTO shareplay_bans (user_id, ban_type, reason, admin_id, is_permanent, banned_until) VALUES ($1, $2, $3, $4, $5, $6)',
+            [userId, 'server', reason || 'Blocked by admin', admin.id, minutes === 0, blockedUntil]);
+        await pool.query('INSERT INTO audit_logs (admin_id, action, details) VALUES ($1, $2, $3)',
+            [admin.id, 'server_block', `Blocked user #${userId} from server`]);
+        res.json({ message: 'User blocked.' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/shareplay/kick-warnings', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const { rows } = await pool.query(`
+            SELECT ks.*, u.email, u.display_name, u.shareplay_banned,
+                   (SELECT COUNT(*) FROM shareplay_kick_history WHERE target_user_id = ks.user_id) AS total_kicks
+            FROM shareplay_kick_strikes ks
+            JOIN users u ON u.id = ks.user_id
+            ORDER BY ks.strike_count DESC, ks.last_kick_at DESC
+        `);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/admin/shareplay/appeals', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    try {
+        const { rows } = await pool.query(`
+            SELECT a.*, u.email, u.display_name
+            FROM shareplay_appeals a
+            JOIN users u ON u.id = a.user_id
+            ORDER BY a.created_at DESC
+        `);
+        res.json(rows);
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/admin/shareplay/appeals/:id/resolve', async (req, res) => {
+    const admin = requireAdmin(req, res);
+    if (!admin) return;
+    const { id } = req.params;
+    const { status, admin_response } = req.body || {};
+    if (!['approved', 'denied'].includes(status)) return res.status(400).json({ error: 'Invalid status.' });
+    try {
+        const appeal = await pool.query('SELECT * FROM shareplay_appeals WHERE id = $1', [id]);
+        if (!appeal.rows.length) return res.status(404).json({ error: 'Appeal not found.' });
+        await pool.query('UPDATE shareplay_appeals SET status = $1, admin_response = $2, admin_id = $3, resolved_at = NOW() WHERE id = $4',
+            [status, admin_response || '', admin.id, id]);
+        if (status === 'approved') {
+            await pool.query('UPDATE users SET shareplay_banned = FALSE WHERE id = $1', [appeal.rows[0].user_id]);
+            await pool.query("UPDATE shareplay_bans SET unbanned_at = NOW(), is_permanent = FALSE WHERE user_id = $1 AND unbanned_at IS NULL", [appeal.rows[0].user_id]);
+            await pool.query('UPDATE shareplay_kick_strikes SET strike_count = 0 WHERE user_id = $1', [appeal.rows[0].user_id]);
+        }
+        await pool.query('INSERT INTO audit_logs (admin_id, action, details) VALUES ($1, $2, $3)',
+            [admin.id, 'appeal_resolve', `${status} appeal #${id} for user #${appeal.rows[0].user_id}`]);
+        res.json({ message: `Appeal ${status}.` });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.post('/me/shareplay/appeal', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    const { message } = req.body || {};
+    if (!message || message.trim().length < 10) return res.status(400).json({ error: 'Please provide a detailed message (min 10 characters).' });
+    try {
+        const existing = await pool.query("SELECT id FROM shareplay_appeals WHERE user_id = $1 AND status = 'pending'", [u.id]);
+        if (existing.rows.length) return res.status(400).json({ error: 'You already have a pending appeal.' });
+        await pool.query('INSERT INTO shareplay_appeals (user_id, message) VALUES ($1, $2)', [u.id, message.trim()]);
+        res.json({ message: 'Appeal submitted. An admin will review it.' });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get('/me/shareplay/status', async (req, res) => {
+    const u = await requireAuth(req, res);
+    if (!u) return;
+    try {
+        const user = await pool.query('SELECT shareplay_banned FROM users WHERE id = $1', [u.id]);
+        const strikes = await pool.query('SELECT strike_count FROM shareplay_kick_strikes WHERE user_id = $1', [u.id]);
+        const pendingAppeal = await pool.query("SELECT id FROM shareplay_appeals WHERE user_id = $1 AND status = 'pending'", [u.id]);
+        const ban = await pool.query("SELECT banned_until, reason FROM shareplay_bans WHERE user_id = $1 AND unbanned_at IS NULL ORDER BY created_at DESC LIMIT 1", [u.id]);
+        res.json({
+            banned: user.rows[0]?.shareplay_banned || false,
+            strikeCount: strikes.rows[0]?.strike_count || 0,
+            hasPendingAppeal: pendingAppeal.rows.length > 0,
+            banReason: ban.rows[0]?.reason || null,
+            bannedUntil: ban.rows[0]?.banned_until || null,
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

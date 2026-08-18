@@ -1,10 +1,21 @@
 # Changelog / Roadmap
 
+## v0.3.21
+- Added SharePlay vote-to-kick system: click a player's name to initiate a vote. Other players see a yellow warning banner and can vote for or against. Majority or tie kicks the player.
+- Strike system: 1st kick = 30-minute SharePlay ban, 2nd kick = 24-hour ban, 3rd kick = permanent ban until admin appeal.
+- Banned users can submit an appeal from their Profile page (above Recent Activity). Admins review and approve/deny appeals.
+- Mobile-responsive SharePlay layout: votes at top, trivia centered, suggest/report below trivia, players and scoring at the bottom. TV mode also stacks vertically on mobile.
+- Improved .btn CSS with border-radius, hover opacity, and disabled states for better visibility.
+- Added admin panel SharePlay Moderation tab with kick warnings (filterable), ban list, and pending appeals management.
+- Admins can now clear a user's leaderboard, delete a user's account, or block a user from the server entirely from the Users tab.
+- New database tables: shareplay_kick_strikes, shareplay_bans, shareplay_appeals, shareplay_kick_history.
+- New API endpoints for SharePlay moderation, user appeals, and admin management.
+- Fixed dark mode: .btn class now inherits card-bg background and border-color so buttons like Clear Filters, Browse, Rename, and Cancel are no longer white-on-white.
+
 ## v0.3.20
 - Fixed Share Play "xhr poll error" by repairing the CRA dev server proxy in setupProxy.js. The proxy was stripping the /socket.io path prefix when forwarding to the backend, caused by http-proxy-middleware v3 path-rewriting changes. Added pathRewrite to restore the prefix and created separate proxy instances for /api and /socket.io.
 - Added explicit Socket.IO server transport config, 60s ping timeout, and allowEIO3 for better reverse-proxy compatibility.
 - Updated Socket.IO client to force polling-first transport with 30 reconnection attempts and exponential backoff for proxy-friendly connections.
-- Fixed dark mode: .btn class now inherits card-bg background and border-color so buttons like Clear Filters, Browse, Rename, and Cancel are no longer white-on-white.
 - Removed hardcoded admin credentials from init-db.js; admin seeding now uses ADMIN_EMAIL and ADMIN_SEED_PASSWORD env vars.
 - Replaced em dashes with hyphens across all source files to prevent encoding issues.
 

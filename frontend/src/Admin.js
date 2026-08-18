@@ -317,6 +317,12 @@ export default function Admin() {
     const [questionStatusFilter, setQuestionStatusFilter] = useState('all');
     const [questionMinAttempts, setQuestionMinAttempts] = useState('');
     const [questionPage, setQuestionPage] = useState(1);
+    const [kickWarnings, setKickWarnings] = useState([]);
+    const [shareplayBans, setShareplayBans] = useState([]);
+    const [shareplayAppeals, setShareplayAppeals] = useState([]);
+    const [shareplayLoading, setShareplayLoading] = useState(false);
+    const [kickWarningFilter, setKickWarningFilter] = useState('');
+    const [expandedKickUser, setExpandedKickUser] = useState(null);
     const [questionPageSize, setQuestionPageSize] = useState(() => {
         try {
             const stored = localStorage.getItem('admin_question_page_size');
@@ -435,6 +441,21 @@ export default function Admin() {
         } catch { flash('❌ Failed to load image settings'); }
     }, []);
 
+    const loadShareplayData = useCallback(async () => {
+        setShareplayLoading(true);
+        try {
+            const [kwRes, bansRes, appealsRes] = await Promise.all([
+                axios.get(`${API_URL}/admin/shareplay/kick-warnings`, authCfg()),
+                axios.get(`${API_URL}/admin/shareplay/bans`, authCfg()),
+                axios.get(`${API_URL}/admin/shareplay/appeals`, authCfg()),
+            ]);
+            setKickWarnings(kwRes.data);
+            setShareplayBans(bansRes.data);
+            setShareplayAppeals(appealsRes.data);
+        } catch { flash('❌ Failed to load SharePlay data'); }
+        finally { setShareplayLoading(false); }
+    }, []);
+
     useEffect(() => { loadCategories(); }, []);
     useEffect(() => { if (tab === 'review') loadReview(); }, [tab]);
     useEffect(() => { if (tab === 'questions' && selCat) loadQuestions(selCat.id); }, [selCat, tab]);
@@ -448,6 +469,7 @@ export default function Admin() {
     useEffect(() => { if (tab === 'data') loadBackups(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadDiscordSsoSettings(); }, [tab]);
     useEffect(() => { if (tab === 'data') loadDiscordBotSettings(); }, [tab]);
+    useEffect(() => { if (tab === 'shareplay') loadShareplayData(); }, [tab]);
     useEffect(() => { setQuestionPage(1); }, [selCat?.id, questionSearch, questionDifficultyFilter, questionStatusFilter, questionMinAttempts, questionPageSize]);
     useEffect(() => {
         try {
@@ -675,6 +697,56 @@ export default function Admin() {
             flash('✅ User unblocked');
             loadUsers();
         } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Unblock failed')); }
+    };
+
+    const unblockShareplayUser = async (userId) => {
+        try {
+            await axios.post(`${API_URL}/admin/shareplay/unblock/${userId}`, {}, authCfg());
+            flash('✅ User unblocked from SharePlay');
+            loadShareplayData();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Unblock failed')); }
+    };
+
+    const resolveAppeal = async (appealId, status) => {
+        try {
+            await axios.post(`${API_URL}/admin/shareplay/appeals/${appealId}/resolve`, { status, admin_response: '' }, authCfg());
+            flash(`✅ Appeal ${status}`);
+            loadShareplayData();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Failed')); }
+    };
+
+    const clearLeaderboard = async (userId) => {
+        if (!window.confirm('Clear this user\'s leaderboard data?')) return;
+        try {
+            await axios.post(`${API_URL}/admin/users/${userId}/clear-leaderboard`, {}, authCfg());
+            flash('✅ Leaderboard cleared');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Failed')); }
+    };
+
+    const deleteUserAccount = async (userId) => {
+        if (!window.confirm('Are you sure? This cannot be undone.')) return;
+        try {
+            await axios.delete(`${API_URL}/admin/users/${userId}`, authCfg());
+            flash('✅ User account deleted');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Failed')); }
+    };
+
+    const blockFromServer = async (userId) => {
+        const minutesStr = window.prompt('Block duration in minutes (0 = forever):', '60');
+        if (minutesStr === null) return;
+        const minutes = Number(minutesStr);
+        if (!Number.isFinite(minutes) || minutes < 0) {
+            flash('❌ Invalid duration');
+            return;
+        }
+        const reason = window.prompt('Reason (optional):', '');
+        try {
+            await axios.post(`${API_URL}/admin/shareplay/block/${userId}`, { minutes, reason }, authCfg());
+            flash('✅ User blocked from server');
+            loadUsers();
+        } catch (e) { flash('❌ ' + (e.response?.data?.error || 'Block failed')); }
     };
 
     // ── Leaderboard actions ───────────────────────────────────────────────────
@@ -946,6 +1018,7 @@ export default function Admin() {
                 <button style={tabStyle('leaderboard')} onClick={() => setTab('leaderboard')}>🏆 Leaderboard</button>
                 <button style={tabStyle('data')} onClick={() => setTab('data')}>🗄️ Data</button>
                 <button style={tabStyle('audit')}      onClick={() => setTab('audit')}>📜 Audit Log</button>
+                <button style={tabStyle('shareplay')}  onClick={() => setTab('shareplay')}>🛡️ SharePlay</button>
             </div>
 
             {/* ── QUESTIONS ──────────────────────────────────────────────────── */}
@@ -1459,6 +1532,27 @@ export default function Admin() {
                                                                 🚫 Block
                                                             </button>
                                                         )}
+                                                        <button
+                                                            className="btn"
+                                                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#6c757d', color: 'white' }}
+                                                            onClick={() => clearLeaderboard(u.id)}
+                                                        >
+                                                            🏆 Clear LB
+                                                        </button>
+                                                        <button
+                                                            className="btn"
+                                                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#dc3545', color: 'white' }}
+                                                            onClick={() => deleteUserAccount(u.id)}
+                                                        >
+                                                            🗑️ Delete
+                                                        </button>
+                                                        <button
+                                                            className="btn"
+                                                            style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#ff9800', color: 'white' }}
+                                                            onClick={() => blockFromServer(u.id)}
+                                                        >
+                                                            🛡️ Block Server
+                                                        </button>
                                                     </div>
                                                 </td>
                                             </tr>
@@ -2273,6 +2367,188 @@ export default function Admin() {
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+
+            {/* ── SHAREPLAY ─────────────────────────────────────────────────── */}
+            {tab === 'shareplay' && (
+                <div>
+                    <h3 style={{ marginBottom: '12px' }}>⚠️ Kick Warnings</h3>
+                    <div style={{ ...cardStyle, marginBottom: '20px' }}>
+                        <input
+                            value={kickWarningFilter}
+                            onChange={e => setKickWarningFilter(e.target.value)}
+                            placeholder="Filter by email or name..."
+                            style={{ width: '100%', padding: '9px 12px', borderRadius: '6px', border: '1px solid var(--border-color)', backgroundColor: 'var(--card-bg)', color: 'var(--text-color)', marginBottom: '12px' }}
+                        />
+                        {shareplayLoading ? (
+                            <p style={{ color: '#888' }}>Loading...</p>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>User</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Display Name</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Strikes</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Last Kick</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Total Kicks</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Banned</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {kickWarnings
+                                            .filter(w => {
+                                                if (!kickWarningFilter) return true;
+                                                const search = kickWarningFilter.toLowerCase();
+                                                return (w.email || '').toLowerCase().includes(search) || (w.display_name || '').toLowerCase().includes(search);
+                                            })
+                                            .map(w => (
+                                                <React.Fragment key={w.user_id}>
+                                                    <tr
+                                                        style={{ borderBottom: '1px solid var(--border-color)', cursor: 'pointer' }}
+                                                        onClick={() => setExpandedKickUser(expandedKickUser === w.user_id ? null : w.user_id)}
+                                                    >
+                                                        <td style={{ padding: '10px 8px' }}>{w.email}</td>
+                                                        <td style={{ padding: '10px 8px' }}>{w.display_name || '-'}</td>
+                                                        <td style={{ padding: '10px 8px' }}>
+                                                            <span style={{
+                                                                color: w.strike_count === 1 ? '#28a745' : w.strike_count === 2 ? '#ffc107' : '#dc3545',
+                                                                fontWeight: 'bold'
+                                                            }}>{w.strike_count}</span>
+                                                        </td>
+                                                        <td style={{ padding: '10px 8px', fontSize: '12px', color: '#888' }}>
+                                                            {w.last_kick_date ? new Date(w.last_kick_date).toLocaleString() : '-'}
+                                                        </td>
+                                                        <td style={{ padding: '10px 8px' }}>{w.total_kicks}</td>
+                                                        <td style={{ padding: '10px 8px' }}>
+                                                            {w.shareplay_banned ? (
+                                                                <Badge color="#dc3545" text="banned" />
+                                                            ) : (
+                                                                <span style={{ color: '#28a745', fontSize: '12px' }}>active</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                    {expandedKickUser === w.user_id && w.kick_history && (
+                                                        <tr>
+                                                            <td colSpan="6" style={{ padding: '12px 16px', backgroundColor: 'var(--bg-color)' }}>
+                                                                <div style={{ fontSize: '13px', fontWeight: 'bold', marginBottom: '6px' }}>Kick History</div>
+                                                                {w.kick_history.map((h, i) => (
+                                                                    <div key={i} style={{ fontSize: '12px', color: '#666', marginBottom: '4px' }}>
+                                                                        {new Date(h.date).toLocaleString()} - {h.reason || 'No reason'}
+                                                                    </div>
+                                                                ))}
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                </React.Fragment>
+                                            ))
+                                        }
+                                        {kickWarnings.length === 0 && (
+                                            <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No kick warnings.</td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+
+                    <h3 style={{ marginBottom: '12px' }}>🚫 SharePlay Bans</h3>
+                    <div style={{ ...cardStyle, marginBottom: '20px' }}>
+                        {shareplayLoading ? (
+                            <p style={{ color: '#888' }}>Loading...</p>
+                        ) : (
+                            <div style={{ overflowX: 'auto' }}>
+                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                                    <thead>
+                                        <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>User</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Display Name</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Ban Type</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Reason</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Banned Until</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Banned By</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Created</th>
+                                            <th style={{ padding: '10px 8px', color: 'var(--text-color)' }}>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {shareplayBans.length === 0 && (
+                                            <tr><td colSpan="8" style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No active bans.</td></tr>
+                                        )}
+                                        {shareplayBans.map(b => (
+                                            <tr key={b.user_id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                                                <td style={{ padding: '10px 8px' }}>{b.email}</td>
+                                                <td style={{ padding: '10px 8px' }}>{b.display_name || '-'}</td>
+                                                <td style={{ padding: '10px 8px' }}><Badge color={b.ban_type === 'permanent' ? '#dc3545' : '#ffc107'} text={b.ban_type} /></td>
+                                                <td style={{ padding: '10px 8px', fontSize: '12px' }}>{b.reason || '-'}</td>
+                                                <td style={{ padding: '10px 8px', fontSize: '12px' }}>
+                                                    {b.banned_until ? new Date(b.banned_until).toLocaleString() : 'Permanent'}
+                                                </td>
+                                                <td style={{ padding: '10px 8px', fontSize: '12px' }}>{b.banned_by_email || '-'}</td>
+                                                <td style={{ padding: '10px 8px', fontSize: '12px', color: '#888' }}>
+                                                    {new Date(b.created_at).toLocaleString()}
+                                                </td>
+                                                <td style={{ padding: '10px 8px' }}>
+                                                    <button
+                                                        className="btn"
+                                                        style={{ fontSize: '12px', padding: '4px 10px', backgroundColor: '#28a745', color: 'white' }}
+                                                        onClick={() => {
+                                                            if (window.confirm(`Unblock ${b.email} from SharePlay?`)) {
+                                                                unblockShareplayUser(b.user_id);
+                                                            }
+                                                        }}
+                                                    >
+                                                        Unblock
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </div>
+
+                    <h3 style={{ marginBottom: '12px' }}>📨 Pending Appeals</h3>
+                    <div style={{ ...cardStyle }}>
+                        {shareplayLoading ? (
+                            <p style={{ color: '#888' }}>Loading...</p>
+                        ) : shareplayAppeals.length === 0 ? (
+                            <p style={{ color: '#888' }}>No pending appeals.</p>
+                        ) : shareplayAppeals.map(a => (
+                            <div key={a.id} style={{ ...cardStyle, borderLeft: `4px solid ${a.status === 'pending' ? '#ffc107' : a.status === 'approved' ? '#28a745' : '#dc3545'}`, marginBottom: '14px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                                    <span style={{ fontSize: '12px', color: '#888' }}>
+                                        <strong>{a.email}</strong> · {a.display_name || 'No display name'}
+                                    </span>
+                                    <Badge color={a.status === 'pending' ? '#ffc107' : a.status === 'approved' ? '#28a745' : '#dc3545'} text={a.status} />
+                                </div>
+                                <p style={{ fontSize: '13px', color: 'var(--text-color)', margin: '0 0 8px', fontStyle: 'italic' }}>"{a.message}"</p>
+                                <div style={{ fontSize: '11px', color: '#888', marginBottom: '8px' }}>
+                                    {new Date(a.created_at).toLocaleString()}
+                                </div>
+                                {a.status === 'pending' && (
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button
+                                            className="btn"
+                                            style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#28a745', color: 'white' }}
+                                            onClick={() => resolveAppeal(a.id, 'approved')}
+                                        >
+                                            Approve
+                                        </button>
+                                        <button
+                                            className="btn"
+                                            style={{ fontSize: '12px', padding: '5px 12px', backgroundColor: '#dc3545', color: 'white' }}
+                                            onClick={() => resolveAppeal(a.id, 'denied')}
+                                        >
+                                            Deny
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        ))}
                     </div>
                 </div>
             )}

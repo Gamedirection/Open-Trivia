@@ -38,10 +38,21 @@
   color: var(--text-color);
   background-color: var(--card-bg);
   border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.15s, background-color 0.15s;
+}
+.btn:hover {
+  opacity: 0.85;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .btn-primary {
   background-color: var(--btn-primary);
   color: white;
+  border-color: var(--btn-primary);
 }
 
 @keyframes trivia-wrong-shake {
@@ -143,4 +154,43 @@
     padding: 6px !important;
     font-size: 12px;
   }
+}
+
+/* ── SharePlay responsive layout ──────────────────────────────────────────── */
+.sp-grid {
+  display: grid;
+  grid-template-columns: 200px 1fr 220px;
+  gap: 14px;
+}
+.sp-players { order: 0; }
+.sp-center  { order: 0; }
+.sp-right   { order: 0; }
+.sp-scoring { order: 0; }
+.sp-actions-wrap { order: 0; grid-column: 1 / -1; }
+
+.sp-tv-grid {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 20px;
+}
+.sp-tv-center { order: 0; }
+.sp-tv-right  { order: 0; }
+
+@media (max-width: 720px) {
+  .sp-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .sp-right       { order: 1; }
+  .sp-center      { order: 2; }
+  .sp-actions-wrap { order: 3; }
+  .sp-players     { order: 4; }
+  .sp-scoring     { order: 5; }
+
+  .sp-tv-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .sp-tv-center { order: 1; }
+  .sp-tv-right  { order: 2; }
 }

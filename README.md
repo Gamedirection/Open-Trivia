@@ -12,7 +12,7 @@ Credits: Alex Sierputowski @ [GameDirection.net](https://gamedirection.net)
 Open-Trivia is a multiplayer trivia platform with admin tooling, category management, adaptive difficulty, leaderboard scoring, and user profiles.
 
 ## Key Features
-- **Share Play** - real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses (🥇🥈🥉), include/exclude category filters, session scoring tied to the leaderboard, and full admin/host settings controls (timer, scoring, display toggles, early-round-end logic).
+- **Share Play** - real-time multiplayer trivia with a persistent Live Room, player-created public/private rooms (4-digit codes), live vote display, speed-medal bonuses, include/exclude category filters, session scoring tied to the leaderboard, full admin/host settings controls (timer, scoring, display toggles, early-round-end logic), vote-to-kick system with 3-strike escalation (30min, 24h, permanent), mobile-responsive stacked layout, and TV mode.
 - Auth with password reset, Discord SSO, admin roles, and account blocking.
 - Discord bot support via the `services/open-trivia-discord` submodule for slash-command, DM, and scheduled trivia.
 - Discord users can submit question suggestions directly from the bot for admin approval.
@@ -32,6 +32,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Category packs: export selected categories as zip (CSV + images), download a pack template, and import from direct CSV uploads, zip files, GitHub, CSV URLs, or shared Google Sheets URLs.
 - Data management: backups, export/import, and per-user restore.
 - CSV question import/export with template.
+- Admin SharePlay moderation: kick warnings with strike tracking, ban list, appeal review, per-user leaderboard clear, account deletion, and server-wide blocking.
 - Helm chart for Kubernetes deployments.
 
 ## Architecture

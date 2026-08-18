@@ -30,7 +30,8 @@ async function initDB() {
                 discord_id VARCHAR(50) UNIQUE,
                 discord_username VARCHAR(255),
                 discord_avatar_url TEXT,
-                animations_enabled BOOLEAN DEFAULT TRUE
+                animations_enabled BOOLEAN DEFAULT TRUE,
+                shareplay_banned BOOLEAN DEFAULT FALSE
             );
             
             CREATE TABLE IF NOT EXISTS categories (
@@ -254,6 +255,46 @@ async function initDB() {
                 last_action_at TIMESTAMP,
                 blocked_until TIMESTAMP,
                 UNIQUE (action, key)
+            );
+
+            CREATE TABLE IF NOT EXISTS shareplay_kick_strikes (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                strike_count INT DEFAULT 0,
+                last_kick_at TIMESTAMP,
+                UNIQUE(user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS shareplay_bans (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                ban_type VARCHAR(20) NOT NULL DEFAULT 'shareplay',
+                banned_until TIMESTAMP,
+                reason TEXT,
+                admin_id INT REFERENCES users(id),
+                is_permanent BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                unbanned_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS shareplay_appeals (
+                id SERIAL PRIMARY KEY,
+                user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                message TEXT NOT NULL,
+                status VARCHAR(20) DEFAULT 'pending',
+                admin_response TEXT,
+                admin_id INT REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS shareplay_kick_history (
+                id SERIAL PRIMARY KEY,
+                target_user_id INT REFERENCES users(id) ON DELETE CASCADE,
+                room_code VARCHAR(10),
+                initiated_by_user_id INT REFERENCES users(id),
+                voters JSONB DEFAULT '[]',
+                kicked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
