@@ -248,11 +248,18 @@ export default function SharePlay() {
     // Report / Suggest (persist across question changes intentionally)
     const [showRequestModal, setShowRequestModal] = useState(false);
     const [showReportMenu,   setShowReportMenu]   = useState(false);
-    const [reportPlayerId,   setReportPlayerId]   = useState('');
     const [reportType,       setReportType]       = useState('general');
     const [reportNote,       setReportNote]       = useState('');
     const [reportMessage,    setReportMessage]    = useState('');
     const reportMenuRef      = useRef(null);
+    const reportingQIdRef    = useRef(null);
+    // Player report
+    const [showPlayerReportMenu, setShowPlayerReportMenu] = useState(false);
+    const [reportPlayerId,   setReportPlayerId]   = useState('');
+    const [playerReportType, setPlayerReportType] = useState('general');
+    const [playerReportNote, setPlayerReportNote] = useState('');
+    const [playerReportMsg,  setPlayerReportMsg]  = useState('');
+    const playerReportRef    = useRef(null);
 
     // Question / voting
     const [currentQuestion, setCurrentQuestion] = useState(null);
@@ -412,6 +419,13 @@ export default function SharePlay() {
     }, [showReportMenu]);
 
     useEffect(() => {
+        if (!showPlayerReportMenu) return;
+        const handler = e => { if (playerReportRef.current && !playerReportRef.current.contains(e.target)) setShowPlayerReportMenu(false); };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showPlayerReportMenu]);
+
+    useEffect(() => {
         const handler = e => { if (e.key === 'Escape') setTvMode(false); };
         document.addEventListener('keydown', handler);
         return () => document.removeEventListener('keydown', handler);
@@ -504,7 +518,31 @@ export default function SharePlay() {
 
     const handleSuggest = useCallback(() => setShowRequestModal(true), []);
 
-    const handleReport = useCallback(async (reasonOverride) => {
+    const handleQuestionReport = useCallback(async (reasonOverride) => {
+        const qId = reportingQIdRef.current;
+        if (!qId) return;
+        try {
+            const token = getToken();
+            const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+            await axios.post(`${REST_BASE}/api/game/report`, { questionId: qId, reason: reasonOverride || 'General Report' }, { headers });
+            setReportMessage('✅ Reported successfully.');
+        } catch (err) {
+            setReportMessage(`⚠️ ${err.response?.data?.error || 'Question flagged for review.'}`);
+        }
+    }, []);
+
+    const submitQuestionReport = useCallback(async () => {
+        const trimmed = reportNote.trim();
+        const needsNote = reportType === 'inappropriate' || reportType === 'incorrect';
+        if (needsNote && !trimmed) { setReportMessage('⚠️ Please add a short description.'); return; }
+        const label = reportType === 'inappropriate' ? 'Inappropriate' : reportType === 'incorrect' ? 'Incorrect Answer' : 'General Report';
+        await handleQuestionReport(needsNote ? `${label}: ${trimmed}` : label);
+        setShowReportMenu(false);
+        setReportNote('');
+        setReportType('general');
+    }, [reportNote, reportType, handleQuestionReport]);
+
+    const handlePlayerReport = useCallback(async (reasonOverride) => {
         if (!reportPlayerId) return;
         try {
             const token = getToken();
@@ -514,26 +552,26 @@ export default function SharePlay() {
                 reportedUserId: Number(reportPlayerId),
                 roomCode,
                 reason: reasonOverride || 'General Report',
-                note: reportNote.trim() || undefined,
+                note: playerReportNote.trim() || undefined,
             }, { headers });
-            setReportMessage(`✅ Reported ${reportedPlayer?.displayName || 'player'} successfully.`);
+            setPlayerReportMsg(`✅ Reported ${reportedPlayer?.displayName || 'player'} successfully.`);
         } catch (err) {
-            setReportMessage(`⚠️ ${err.response?.data?.error || 'Failed to report player.'}`);
+            setPlayerReportMsg(`⚠️ ${err.response?.data?.error || 'Failed to report player.'}`);
         }
-    }, [reportPlayerId, players, roomCode, reportNote]);
+    }, [reportPlayerId, players, roomCode, playerReportNote]);
 
-    const submitReport = useCallback(async () => {
-        if (!reportPlayerId) { setReportMessage('⚠️ Select a player to report.'); return; }
-        const trimmed = reportNote.trim();
-        const needsNote = reportType === 'inappropriate' || reportType === 'cheating';
-        if (needsNote && !trimmed) { setReportMessage('⚠️ Please add a short description.'); return; }
-        const label = reportType === 'inappropriate' ? 'Inappropriate' : reportType === 'cheating' ? 'Cheating' : reportType === 'harassment' ? 'Harassment' : 'General Report';
-        await handleReport(needsNote ? `${label}: ${trimmed}` : label);
-        setShowReportMenu(false);
-        setReportNote('');
-        setReportType('general');
+    const submitPlayerReport = useCallback(async () => {
+        if (!reportPlayerId) { setPlayerReportMsg('⚠️ Select a player to report.'); return; }
+        const trimmed = playerReportNote.trim();
+        const needsNote = playerReportType === 'inappropriate' || playerReportType === 'cheating' || playerReportType === 'harassment';
+        if (needsNote && !trimmed) { setPlayerReportMsg('⚠️ Please add a short description.'); return; }
+        const label = playerReportType === 'inappropriate' ? 'Inappropriate' : playerReportType === 'cheating' ? 'Cheating' : playerReportType === 'harassment' ? 'Harassment' : 'General Report';
+        await handlePlayerReport(needsNote ? `${label}: ${trimmed}` : label);
+        setShowPlayerReportMenu(false);
+        setPlayerReportNote('');
+        setPlayerReportType('general');
         setReportPlayerId('');
-    }, [reportNote, reportType, reportPlayerId, handleReport]);
+    }, [playerReportNote, playerReportType, reportPlayerId, handlePlayerReport]);
 
     const copyCode = useCallback(() => {
         navigator.clipboard?.writeText(roomCode).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
@@ -1163,32 +1201,24 @@ export default function SharePlay() {
                         <button
                             style={{ ...btn('#6c757d'), fontSize: '0.85rem', padding: '7px 14px' }}
                             onClick={() => {
+                                reportingQIdRef.current = currentQuestion.id;
                                 setShowReportMenu(v => !v);
                                 setReportMessage('');
-                                setReportPlayerId('');
                             }}
                         >
                             ⚠ Report
                         </button>
 
                         {showReportMenu && (
-                            <div style={{ position: 'absolute', bottom: '110%', left: 0, background: 'var(--card-bg,#fff)', border: '1px solid var(--border-color,#ddd)', borderRadius: '10px', padding: '14px', width: '280px', zIndex: 20, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }}>
-                                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '6px' }}>Report Player</div>
-                                <select value={reportPlayerId} onChange={e => setReportPlayerId(e.target.value)}
-                                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
-                                    <option value="">Select a player...</option>
-                                    {players.filter(p => p.userId && p.userId !== user?.id).map(p => (
-                                        <option key={p.userId} value={p.userId}>{p.displayName}</option>
-                                    ))}
-                                </select>
+                            <div style={{ position: 'absolute', bottom: '110%', left: 0, background: 'var(--card-bg,#fff)', border: '1px solid var(--border-color,#ddd)', borderRadius: '10px', padding: '14px', width: '260px', zIndex: 20, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }}>
+                                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '6px' }}>Report Question</div>
                                 <select value={reportType} onChange={e => setReportType(e.target.value)}
                                     style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
                                     <option value="general">General Report</option>
-                                    <option value="inappropriate">Inappropriate Behavior</option>
-                                    <option value="cheating">Cheating</option>
-                                    <option value="harassment">Harassment</option>
+                                    <option value="inappropriate">Inappropriate</option>
+                                    <option value="incorrect">Incorrect Answer</option>
                                 </select>
-                                {(reportType === 'inappropriate' || reportType === 'cheating' || reportType === 'harassment') && (
+                                {(reportType === 'inappropriate' || reportType === 'incorrect') && (
                                     <textarea value={reportNote} onChange={e => setReportNote(e.target.value)}
                                         placeholder="Add a short description..."
                                         rows={3}
@@ -1200,8 +1230,56 @@ export default function SharePlay() {
                                     </div>
                                 )}
                                 <div style={{ display: 'flex', gap: '8px' }}>
-                                    <button style={{ ...btn(), flex: 1, padding: '7px', fontSize: '0.85rem' }} onClick={submitReport}>Submit</button>
+                                    <button style={{ ...btn(), flex: 1, padding: '7px', fontSize: '0.85rem' }} onClick={submitQuestionReport}>Submit</button>
                                     <button style={{ ...btn('#6c757d'), padding: '7px 12px', fontSize: '0.85rem' }} onClick={() => { setShowReportMenu(false); setReportMessage(''); }}>Cancel</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    <div style={{ position: 'relative' }} ref={playerReportRef}>
+                        <button
+                            style={{ ...btn('#6c757d'), fontSize: '0.85rem', padding: '7px 14px' }}
+                            onClick={() => {
+                                setShowPlayerReportMenu(v => !v);
+                                setPlayerReportMsg('');
+                                setReportPlayerId('');
+                            }}
+                        >
+                            🚩 Report Player
+                        </button>
+
+                        {showPlayerReportMenu && (
+                            <div style={{ position: 'absolute', bottom: '110%', left: 0, background: 'var(--card-bg,#fff)', border: '1px solid var(--border-color,#ddd)', borderRadius: '10px', padding: '14px', width: '280px', zIndex: 20, boxShadow: '0 6px 20px rgba(0,0,0,0.15)' }}>
+                                <div style={{ fontSize: '0.8rem', color: '#888', marginBottom: '6px' }}>Report Player</div>
+                                <select value={reportPlayerId} onChange={e => setReportPlayerId(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
+                                    <option value="">Select a player...</option>
+                                    {players.filter(p => p.userId && p.userId !== user?.id).map(p => (
+                                        <option key={p.userId} value={p.userId}>{p.displayName}</option>
+                                    ))}
+                                </select>
+                                <select value={playerReportType} onChange={e => setPlayerReportType(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', marginBottom: '8px' }}>
+                                    <option value="general">General Report</option>
+                                    <option value="inappropriate">Inappropriate Behavior</option>
+                                    <option value="cheating">Cheating</option>
+                                    <option value="harassment">Harassment</option>
+                                </select>
+                                {(playerReportType === 'inappropriate' || playerReportType === 'cheating' || playerReportType === 'harassment') && (
+                                    <textarea value={playerReportNote} onChange={e => setPlayerReportNote(e.target.value)}
+                                        placeholder="Add a short description..."
+                                        rows={3}
+                                        style={{ width: '100%', padding: '6px 8px', borderRadius: '6px', border: '1px solid var(--border-color,#ddd)', background: 'var(--card-bg,#fff)', color: 'var(--text-color,#333)', resize: 'vertical', boxSizing: 'border-box', marginBottom: '8px' }} />
+                                )}
+                                {playerReportMsg && (
+                                    <div style={{ fontSize: '0.8rem', marginBottom: '8px', color: playerReportMsg.startsWith('✅') ? '#155724' : '#856404' }}>
+                                        {playerReportMsg}
+                                    </div>
+                                )}
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                    <button style={{ ...btn(), flex: 1, padding: '7px', fontSize: '0.85rem' }} onClick={submitPlayerReport}>Submit</button>
+                                    <button style={{ ...btn('#6c757d'), padding: '7px 12px', fontSize: '0.85rem' }} onClick={() => { setShowPlayerReportMenu(false); setPlayerReportMsg(''); }}>Cancel</button>
                                 </div>
                             </div>
                         )}
@@ -1209,6 +1287,9 @@ export default function SharePlay() {
 
                     {reportMessage && !showReportMenu && (
                         <span style={{ fontSize: '0.85rem', color: reportMessage.startsWith('✅') ? '#155724' : '#856404' }}>{reportMessage}</span>
+                    )}
+                    {playerReportMsg && !showPlayerReportMenu && (
+                        <span style={{ fontSize: '0.85rem', color: playerReportMsg.startsWith('✅') ? '#155724' : '#856404' }}>{playerReportMsg}</span>
                     )}
                 </div>
             )}
