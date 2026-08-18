@@ -4835,7 +4835,7 @@ const PORT = process.env.PORT || 5000;
 initDatabase().then(() => {
     setInterval(runScheduledResets, 60 * 1000);
     const httpServer = http.createServer(app);
-    initSharePlay(httpServer, pool, process.env.JWT_SECRET);
+    initSharePlay(httpServer, pool, process.env.JWT_SECRET, app);
     httpServer.listen(PORT, '0.0.0.0', () => {
         console.log(`
 ╔════════════════════════════════════════════╗

@@ -432,6 +432,16 @@ export default function SharePlay() {
     }, []);
 
     useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get('shareplay');
+        if (code && connected && socketRef.current) {
+            setJoinCode(code);
+            socketRef.current.emit('join_room', { code });
+            window.history.replaceState({}, '', '/share-play');
+        }
+    }, [connected]);
+
+    useEffect(() => {
         const socket = socketRef.current;
         if (!socket) return;
 

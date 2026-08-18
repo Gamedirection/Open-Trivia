@@ -473,7 +473,7 @@ function cancelKickVote(room, code, io) {
     io.to(code).emit('kick_vote_cancelled', { message: 'Vote to kick cancelled.' });
 }
 
-module.exports = function initSharePlay(server, pool, jwtSecret) {
+module.exports = function initSharePlay(server, pool, jwtSecret, app) {
     const io = new Server(server, {
         cors: { origin: '*', methods: ['GET', 'POST'] },
         transports: ['polling', 'websocket'],
@@ -838,6 +838,18 @@ module.exports = function initSharePlay(server, pool, jwtSecret) {
 
         socket.on('leave_room', () => dropFromRoom());
         socket.on('disconnect', () => dropFromRoom());
+    });
+
+    // REST endpoint: create a room and return its code (used by Discord bot)
+    app.post('/api/shareplay/create-room', async (req, res) => {
+        try {
+            const code = generateCode();
+            const room = makeRoom(code, false);
+            room.isPublic = false;
+            rooms.set(code, room);
+            console.log(`[SharePlay] Room ${code} created via REST API`);
+            res.json({ code });
+        } catch (err) { res.status(500).json({ error: err.message }); }
     });
 
     return io;

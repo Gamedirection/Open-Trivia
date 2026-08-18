@@ -1,6 +1,7 @@
 # Changelog / Roadmap
 
 ## v0.3.21
+- Added Discord /shareplay command: creates a Share Play room and returns an embed with a clickable join link and room code. Auto-joins the room when the link is opened in a browser.
 - Added admin Category Merge: select two categories to merge one into the other. Flagged as destructive with a confirmation checkbox and warning modal. A full backup snapshot is saved automatically before every merge. All questions, game sessions, score resets, custom category groups, and scheduled trivia references are updated.
 - Added Report Player button in SharePlay actions bar, alongside the existing question Report button. Lets players report others for Inappropriate Behavior, Cheating, or Harassment with optional description. Stored in new player_reports table.
 - Added Set Host in SharePlay room settings: host can transfer host status to another player via dropdown. Uses new transfer_host socket event.
