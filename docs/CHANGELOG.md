@@ -1,5 +1,13 @@
 # Changelog / Roadmap
 
+## v0.3.20
+- Fixed Share Play "xhr poll error" by repairing the CRA dev server proxy in setupProxy.js. The proxy was stripping the /socket.io path prefix when forwarding to the backend, caused by http-proxy-middleware v3 path-rewriting changes. Added pathRewrite to restore the prefix and created separate proxy instances for /api and /socket.io.
+- Added explicit Socket.IO server transport config, 60s ping timeout, and allowEIO3 for better reverse-proxy compatibility.
+- Updated Socket.IO client to force polling-first transport with 30 reconnection attempts and exponential backoff for proxy-friendly connections.
+- Fixed dark mode: .btn class now inherits card-bg background and border-color so buttons like Clear Filters, Browse, Rename, and Cancel are no longer white-on-white.
+- Removed hardcoded admin credentials from init-db.js; admin seeding now uses ADMIN_EMAIL and ADMIN_SEED_PASSWORD env vars.
+- Replaced em dashes with hyphens across all source files to prevent encoding issues.
+
 ## v0.3.19
 - Added include/exclude category filtering in solo Play with visible category pills.
 - Added saved custom category presets that users can name, reapply, and remove from their Profile.

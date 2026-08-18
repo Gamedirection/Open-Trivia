@@ -267,13 +267,18 @@ export default function SharePlay() {
         const token = getToken();
         const sock = io(SOCKET_URL, {
             auth: token ? { token } : {},
+            transports: ['polling', 'websocket'],
             reconnectionDelay: 1000,
-            reconnectionAttempts: 10,
+            reconnectionDelayMax: 10000,
+            reconnectionAttempts: 30,
+            timeout: 20000,
         });
 
         sock.on('connect',       () => { setConnected(true); setConnError(''); sock.emit('get_rooms'); });
-        sock.on('disconnect',    () => setConnected(false));
-        sock.on('connect_error', err => setConnError(`Cannot connect: ${err.message}`));
+        sock.on('disconnect',    (reason) => { setConnected(false); if (reason === 'io server disconnect') { setConnError('Disconnected by server. Reconnecting...'); } });
+        sock.on('connect_error', err => { console.error('[SharePlay] connect_error:', err.message); setConnError(`Cannot connect: ${err.message}`); });
+        sock.io.on('reconnect_attempt', (attempt) => { setStatusMsg(`Reconnecting... (attempt ${attempt})`); });
+        sock.io.on('reconnect', () => { setStatusMsg(''); });
 
         sock.on('rooms_list', data => setPublicRooms(data.rooms || []));
 
@@ -699,7 +704,7 @@ export default function SharePlay() {
 
                                 {earlyEndSecs !== null && (
                                     <div style={{ background: '#3d2b00', border: '1px solid #d29922', borderRadius: '10px', padding: '12px 18px', color: '#d29922', fontWeight: 'bold', textAlign: 'center' }}>
-                                        All voted — ending in {earlyEndSecs}s
+                                        All voted - ending in {earlyEndSecs}s
                                     </div>
                                 )}
 

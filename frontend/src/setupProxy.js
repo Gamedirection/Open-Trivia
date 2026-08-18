@@ -1,13 +1,15 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 module.exports = function(app) {
-  const backendProxy = createProxyMiddleware({
+  app.use('/api', createProxyMiddleware({
+    target: 'http://backend:5000',
+    changeOrigin: true,
+  }));
+
+  app.use('/socket.io', createProxyMiddleware({
     target: 'http://backend:5000',
     changeOrigin: true,
     ws: true,
-    logLevel: 'debug',
-  });
-
-  app.use('/api', backendProxy);
-  app.use('/socket.io', backendProxy);
+    pathRewrite: { '^': '/socket.io' },
+  }));
 };

@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 const pool = new Pool({
@@ -254,26 +255,21 @@ async function initDB() {
                 blocked_until TIMESTAMP,
                 UNIQUE (action, key)
             );
-            
-            -- Create Admin User if none exists
-            DO $$
-            DECLARE
-                user_count INTEGER;
-            BEGIN
-                SELECT COUNT(*) INTO user_count FROM users;
-                IF user_count = 0 THEN
-                    INSERT INTO users (email, password_hash, role, score, display_name, show_email)
-                    VALUES (
-                        'asierputowski@ctmsit.com',
-                        '\$2a\$06\$RSlUWkudtmDFVSUy94ktluvq/HQGAxE46XbfqeAoVBZdaaOzAcTMK',
-                        'admin',
-                        0,
-                        split_part('asierputowski@ctmsit.com', '@', 1),
-                        TRUE
-                    );
-                END IF;
-            END $$;
         `);
+
+        const adminEmail = process.env.ADMIN_EMAIL || 'admin@example.com';
+        const adminPassword = process.env.ADMIN_SEED_PASSWORD || 'admin123';
+        const { rows } = await client.query('SELECT COUNT(*)::int AS cnt FROM users');
+        if (rows[0].cnt === 0) {
+            const hash = await bcrypt.hash(adminPassword, 10);
+            await client.query(
+                `INSERT INTO users (email, password_hash, role, score, display_name, show_email)
+                 VALUES ($1, $2, 'admin', 0, split_part($1, '@', 1), TRUE)`,
+                [adminEmail, hash]
+            );
+            console.log(`   Created admin user: ${adminEmail} / ${adminPassword}`);
+        }
+
         console.log("✅ Database initialized successfully.");
     } catch (err) {
         console.error("❌ Database initialization failed:", err.message);

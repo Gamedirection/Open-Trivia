@@ -392,6 +392,11 @@ function applySettings(room, data) {
 module.exports = function initSharePlay(server, pool, jwtSecret) {
     const io = new Server(server, {
         cors: { origin: '*', methods: ['GET', 'POST'] },
+        transports: ['polling', 'websocket'],
+        pingTimeout: 60000,
+        pingInterval: 25000,
+        allowEIO3: true,
+        maxHttpBufferSize: 1e6,
     });
 
     rooms.set(LIVE_CODE, makeRoom(LIVE_CODE, true));

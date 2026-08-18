@@ -40,7 +40,7 @@ Open-Trivia is a multiplayer trivia platform with admin tooling, category manage
 - Discord bot: separate Node service in `services/open-trivia-discord`.
 - Images: GHCR.
 
-## Share Play — Capacity & Scaling
+## Share Play - Capacity & Scaling
 
 Share Play runs socket.io on the same Node.js process as the REST API. All room state lives in memory on one instance. These are rough estimates based on a single server.
 
@@ -55,19 +55,19 @@ Share Play runs socket.io on the same Node.js process as the REST API. All room 
 
 **What drives the limits:**
 - Each WebSocket connection uses ~30–80 KB RAM. A room with 50 players broadcasting every vote update is the main CPU cost.
-- Round-end scoring loops are O(votes) + N DB inserts per round — at high concurrency, DB becomes the first bottleneck.
+- Round-end scoring loops are O(votes) + N DB inserts per round - at high concurrency, DB becomes the first bottleneck.
 - The live room continuously runs regardless of player count, consuming one background timer + DB write per round.
 
 ### Bottlenecks in order
 
-1. **Node.js event loop** — round-end broadcasts block briefly. Fine up to ~500 players in a single room; above that, rounds feel sluggish.
-2. **PostgreSQL** — default `max_connections = 100`. Add pgBouncer or raise the limit before 50+ concurrent rounds.
-3. **Memory** — room state + socket buffers. Monitor with `docker stats`.
-4. **Network** — vote broadcasts are small JSON; only an issue at thousands of concurrent voters.
+1. **Node.js event loop** - round-end broadcasts block briefly. Fine up to ~500 players in a single room; above that, rounds feel sluggish.
+2. **PostgreSQL** - default `max_connections = 100`. Add pgBouncer or raise the limit before 50+ concurrent rounds.
+3. **Memory** - room state + socket buffers. Monitor with `docker stats`.
+4. **Network** - vote broadcasts are small JSON; only an issue at thousands of concurrent voters.
 
 ### Horizontal scaling (if you need it)
 
-Current architecture is single-instance only — room state is in memory, not shared. To scale past one server:
+Current architecture is single-instance only - room state is in memory, not shared. To scale past one server:
 
 1. Add **`socket.io-redis`** adapter so multiple Node instances share room state via Redis pub/sub.
 2. Put a **sticky-session** load balancer in front (nginx `ip_hash`, HAProxy, or Traefik `stickycookie`) so a client always hits the same instance.

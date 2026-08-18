@@ -68,7 +68,7 @@ fi
 ROWS=$(docker compose exec -T db psql -U "$PG_USER" -d "$PG_DB" -tAc \
   "UPDATE users SET password_hash='${HASHED}' WHERE email='${ADMIN_EMAIL}' AND is_anonymous=FALSE; SELECT ROW_COUNT();")
 
-# psql UPDATE doesn't return ROW_COUNT() — check via SELECT instead
+# psql UPDATE doesn't return ROW_COUNT() - check via SELECT instead
 UPDATED=$(docker compose exec -T db psql -U "$PG_USER" -d "$PG_DB" -tAc \
   "SELECT COUNT(*) FROM users WHERE email='${ADMIN_EMAIL}' AND is_anonymous=FALSE;")
 

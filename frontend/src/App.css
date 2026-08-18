@@ -36,6 +36,8 @@
 /* Buttons */
 .btn {
   color: var(--text-color);
+  background-color: var(--card-bg);
+  border: 1px solid var(--border-color);
 }
 .btn-primary {
   background-color: var(--btn-primary);
